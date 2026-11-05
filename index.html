@@ -120,8 +120,10 @@ textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
         <div class="row">
           <div><label class="f">訪視日期</label><input type="date" id="fDate"></div>
           <div><label class="f">到達時間</label><input type="time" id="fTime"></div>
+          <div><label class="f">離開時間 <span class="pr">（選填）</span></label><input type="time" id="fLeave"></div>
         </div>
         <label class="chk"><input type="checkbox" id="fHoliday"> 例假日／國定假日（週六日自動勾選）</label>
+        <label class="chk"><input type="checkbox" id="fEmerg"> 緊急訪視（符合適應症且有醫囑，健保點數才可依時段加成）</label>
         <div class="pill n" id="fTier"></div>
       </div>
 
@@ -130,10 +132,22 @@ textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
         <label class="f">給付方式</label>
         <div class="seg" id="fPay"></div>
         <div id="groupsWrap">
+          <div id="placeWrap">
+            <label class="f">服務地點</label>
+            <div class="seg" id="fPlace"></div>
+          </div>
           <label class="f">本次執行的特殊照護群組（自動判定類別）</label>
           <div class="seg" id="fGroups"></div>
+          <label class="chk"><input type="checkbox" id="fExempt"> 免部分負擔（福保、榮民、重大傷病、百歲以上）</label>
+          <label class="chk" id="docWrap"><input type="checkbox" id="fDoc"> 醫師同行訪視（另計醫師訪視費）</label>
+          <div class="row" style="margin-top:4px">
+            <div><label class="f">兒童加成</label>
+              <select id="fChild"><option value="">無</option><option value="a">未滿 6 個月（+60%）</option><option value="b">6 個月～未滿 2 歲（+30%）</option><option value="c">2 歲～未滿 7 歲（+20%）</option></select></div>
+          </div>
         </div>
         <div id="ltcWrap" class="hide">
+          <label class="f">長照身分（決定 C 碼部分負擔）</label>
+          <div class="seg" id="fHouse"></div>
           <label class="f">本次提供的專業服務 C 碼</label>
           <div id="fLtc"></div>
         </div>
@@ -145,6 +159,7 @@ textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
       <div class="card">
         <h2>自費管路耗材 <small>不分帳，全歸居護所</small></h2>
         <div id="fSupplies"></div>
+        <div class="hint err hide" id="supplyWarn">健保個案提醒：依支付標準附表 5.1.4，一般鼻胃管、導尿管、導尿包、敷料等已含在護理訪視點數內；矽質鼻胃管、矽質二叉尿管、氣切管須有醫囑才可另行申報特材。向健保個案另收自費前，請確認收費依據。</div>
       </div>
       <div class="card">
         <h2>其他自費項目</h2>
@@ -205,23 +220,24 @@ textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
    ===================================================================== */
 const CONFIG = {
   API_URL:   'https://script.google.com/macros/s/AKfycbxwzvTt4fqaibAQz27TQwLO-iYYRMuGs8PTPtHv9XKODZnnfkl8p_KTxo1-DooV4wgkyQ/exec',
-  API_TOKEN: '1234',
+  API_TOKEN: '在這裡填入 Apps Script 的 TOKEN',
   NURSES:    ['余易旂','高渝婷','丁怡文','楊珍宜'],
-  RATE:      0.95,     // 健保點數 → 金額
+  RATE:      0.95,     // 健保點數 → 健保署支付金額（免部分負擔者以 1.0 計）
   SHARE:     60,       // 08–20 護理師分得 %
-  // 各給付方式訪視點數（第一～四類）
+  COPAY:     0.05,     // 居家照護部分負擔 5%，無條件進位（與愛馨價目表一致）
+  // 各給付方式護理訪視點數（第一～四類）
   PTS: {
-    home:  {1:774, 2:1528,3:2158,4:2200},   // 居家醫療（S2 價目表）
-    acute: {1:0,   2:0,   3:0,   4:0},      // 在宅急症：待填
-    nhi:   {1:1103,2:1528,3:1843,4:2158}    // 一般健保（合約書）
+    nhi:      {1:1103,2:1528,3:1843,4:2158},  // 一般健保・在宅  05301C/05303C/05305C/05321C（115.04.01）
+    nhi_inst: {1:882, 2:1222,3:1474,4:1726},  // 一般健保・機構  05342C/05346C/05350C/05354C
+    home:     {1:774, 2:1528,3:2158,4:2200},  // 居家醫療（S2 價目表，待以居整計畫核對）
+    acute:    {1:0,   2:0,   3:0,   4:0}      // 在宅急症：待填
   },
-  // 掛號費（部分負擔）：第一～四類 × 時段別
-  REG: {
-    wd: [56, 77, 93, 108],    // 平日白天 08–17
-    hd: [78, 107,130,152],    // 假日白天 08–17
-    ev: [83, 115,139,162],    // 每日夜間 17–22
-    nt: [94, 130,157,184]     // 每日深夜 22–08
-  }
+  DOC_PTS:   {home:1631, inst:1304},          // 醫師訪視費 05307C／05358C
+  // 緊急訪視加成（通則十）：假日 40%、夜間 50%、深夜 70%；假日＋夜間取 50%、假日＋深夜取 70%
+  EMERG:     {wd:0, hd:0.4, ev:0.5, nt:0.7},
+  CHILD:     {'':0, a:0.6, b:0.3, c:0.2},     // 兒童加成（通則十二）
+  // 長照 B、C 碼部分負擔比率（附表五），小數點後無條件捨去
+  LTC_COPAY: {gen:16, mid:5, low:0}
 };
 
 /* ================= 價目 ================= */
@@ -243,8 +259,11 @@ const LTC=[
   {code:'CB01a',name:'營養照護',pay:1500,self:2000},
   {code:'CB02',name:'進食與吞嚥照護',pay:1500,self:2000},
   {code:'CB04',name:'臥床或長期活動受限照護',pay:1500,self:2000}];
+const HOUSES=[{id:'gen',name:'一般戶 16%'},{id:'mid',name:'中低收入戶 5%'},{id:'low',name:'低收入戶 0%'}];
+const PLACES=[{id:'home',name:'在宅'},{id:'inst',name:'機構'}];
 const BUCKETS=[
   {id:'nhi',name:'健保',c:'var(--c-nhi)'},
+  {id:'doc',name:'醫師訪視',c:'#5b6b8c'},
   {id:'reg',name:'掛號費',c:'var(--c-reg)'},
   {id:'self',name:'自費服務',c:'var(--c-self)'},
   {id:'supply',name:'耗材',c:'var(--c-supply)'},
@@ -302,46 +321,67 @@ async function checkConnection(){
 }
 
 /* ================= 計算 ================= */
+const RANK={wd:0,hd:1,ev:2,nt:3};
+const toMin=t=>{const [h,m]=(t||'0:0').split(':').map(Number);return h*60+(m||0)};
+function tierAtMin(min,holiday){const h=Math.floor(((min%1440)+1440)%1440/60);
+  return (h>=22||h<8)?'nt':(h>=17)?'ev':(holiday?'hd':'wd')}
 function timeInfo(f){
-  const h=Number((f.time||'09:00').split(':')[0]);
-  const slot=(h>=8&&h<20)?'day':'night';                       // 分帳時段
-  const tier=(h>=22||h<8)?'nt':(h>=17)?'ev':(f.holiday?'hd':'wd'); // 掛號費時段
+  const a=toMin(f.time||'09:00');
+  const h=Math.floor(a/60);
+  const slot=(h>=8&&h<20)?'day':'night';            // 分帳時段（以到達時間）
+  let tier=tierAtMin(a,f.holiday);                   // 加成區間（以到達時間起算）
+  if(f.leave){                                       // 離開時跨入較高區間逾 30 分鐘 → 以較高區間計
+    let l=toMin(f.leave); if(l<a) l+=1440;
+    const t2=tierAtMin(l-31,f.holiday);              // 「逾」30 分鐘
+    if(l-31>=a && RANK[t2]>RANK[tier]) tier=t2;
+  }
   return {slot,tier};
 }
 function calc(f){
   const isC=f.pay==='c';
   const {slot,tier}=timeInfo(f);
   const cat=isC?0:Math.min(4,f.groups.length+1);
-  const b={nhi:0,reg:0,self:0,supply:0,ltc:0,fare:0};
-  let nhiPts=0, ltcSelf=0;
+  const place=f.pay==='nhi'?(f.place||'home'):'home';
+  const b={nhi:0,doc:0,reg:0,self:0,supply:0,ltc:0,fare:0};
+  let nhiPts=0, docPts=0, docCopay=0, ltcSelf=0, ltcCopay=0, addPct=0;
   if(!isC){
-    nhiPts=Number(CONFIG.PTS[f.pay]?.[cat])||0;
-    b.nhi=Math.round(nhiPts*CONFIG.RATE);
-    b.reg=CONFIG.REG[tier][cat-1];
+    const tbl=f.pay==='nhi'&&place==='inst'?CONFIG.PTS.nhi_inst:CONFIG.PTS[f.pay];
+    addPct=(f.emerg?CONFIG.EMERG[tier]:0)+(CONFIG.CHILD[f.child||'']||0);
+    nhiPts=Math.round((Number(tbl?.[cat])||0)*(1+addPct));
+    const copay=f.exempt?0:CONFIG.COPAY, rate=f.exempt?1:CONFIG.RATE;
+    b.nhi=Math.round(nhiPts*rate);
+    b.reg=Math.ceil(nhiPts*copay);                  // 掛號費＝護理訪視部分負擔
+    if(f.doc){
+      docPts=Math.round(CONFIG.DOC_PTS[place]*(1+addPct));
+      docCopay=Math.ceil(docPts*copay);
+      b.doc=Math.round(docPts*rate)+docCopay;       // 醫師訪視（含其部分負擔）
+    }
   } else for(const l of LTC){const md=f.ltc[l.code];
-    if(md==='pay'&&l.pay) b.ltc+=l.pay;
+    if(md==='pay'&&l.pay){ b.ltc+=l.pay; ltcCopay+=Math.floor(l.pay*(CONFIG.LTC_COPAY[f.house||'gen'])/100); }
     if(md==='self'){ if(l.bucket==='self') b.self+=l.self; else {b.ltc+=l.self; ltcSelf+=l.self;} }}
   for(const s of SUPPLIES) b.supply+=(f.supplies[s.id]||0)*s.price;
   for(const o of OTHER) b.self+=(f.other[o.id]||0)*o.price;
   for(const c of f.custom) b.self+=Number(c.amount)||0;
   b.fare=Number(f.fare)||0;
-  // 分帳：耗材全歸居護所；20–08 掛號費、自費、車資全歸護理師；健保、C碼一律依比例
+  // 分帳：耗材、醫師訪視全歸居護所；20–08 掛號費、自費、車資全歸護理師；健保、C碼依比例
   const night=slot==='night', S=CONFIG.SHARE;
-  const pct={nhi:S, ltc:S, reg:night?100:S, self:night?100:S, fare:night?100:S, supply:0};
+  const pct={nhi:S, ltc:S, doc:0, reg:night?100:S, self:night?100:S, fare:night?100:S, supply:0};
   const nurse={},agency={};
   for(const k in b){nurse[k]=Math.round(b[k]*pct[k]/100); agency[k]=b[k]-nurse[k];}
-  return {cat,slot,tier,nhiPts,b,nurse,agency,pct,
+  return {cat,slot,tier,place,addPct,nhiPts,docPts,docCopay,ltcCopay,b,nurse,agency,pct,
     total:sum(b),nurseTotal:sum(nurse),agencyTotal:sum(agency),
-    onsite:b.reg+b.self+b.supply+ltcSelf+b.fare, rate:CONFIG.RATE};
+    onsite:b.reg+docCopay+b.self+b.supply+ltcSelf+ltcCopay+b.fare, rate:CONFIG.RATE};
 }
 
 /* ================= 填寫表單 ================= */
 let F;
 function resetForm(keep){
   const d=keep?.date||today();
-  F={date:d,time:nowTime(),holiday:isWeekend(d),nurse:keep?.nurse||lsGet('ax_nurse',CONFIG.NURSES[0]),
-     caseCode:'',pay:keep?.pay||'nhi',groups:[],supplies:{},other:{},custom:[],ltc:{},fare:'',note:''};
-  $('fDate').value=F.date; $('fTime').value=F.time; $('fHoliday').checked=F.holiday;
+  F={date:d,time:nowTime(),leave:'',holiday:isWeekend(d),emerg:false,nurse:keep?.nurse||lsGet('ax_nurse',CONFIG.NURSES[0]),
+     caseCode:'',pay:keep?.pay||'nhi',place:keep?.place||'home',exempt:false,doc:false,child:'',house:'gen',
+     groups:[],supplies:{},other:{},custom:[],ltc:{},fare:'',note:''};
+  $('fDate').value=F.date; $('fTime').value=F.time; $('fLeave').value=''; $('fHoliday').checked=F.holiday;
+  $('fEmerg').checked=false; $('fExempt').checked=false; $('fDoc').checked=false; $('fChild').value='';
   $('fCase').value=''; $('fFare').value=''; $('fNote').value='';
   renderForm();
 }
@@ -359,6 +399,11 @@ function liveSum(){const r=calc(F);
 function renderForm(){
   $('fNurse').innerHTML=CONFIG.NURSES.map(n=>`<option ${n===F.nurse?'selected':''}>${esc(n)}</option>`).join('');
   seg($('fPay'),PAYS,F.pay,v=>{F.pay=v;renderForm()});
+  seg($('fPlace'),PLACES,F.place,v=>{F.place=v;renderForm()});
+  seg($('fHouse'),HOUSES,F.house,v=>{F.house=v;renderForm()});
+  $('placeWrap').classList.toggle('hide',F.pay!=='nhi');
+  $('docWrap').classList.toggle('hide',F.pay!=='nhi');
+  if(F.pay!=='nhi'){ F.doc=false; $('fDoc').checked=false; }
   seg($('fGroups'),GROUPS.map(g=>({id:g,name:g})),F.groups,v=>{
     F.groups=F.groups.includes(v)?F.groups.filter(x=>x!==v):[...F.groups,v];renderForm()},true);
   stepper(SUPPLIES,F.supplies,$('fSupplies'));
@@ -373,11 +418,14 @@ function renderForm(){
   $('groupsWrap').classList.toggle('hide',isC);
   $('ltcWrap').classList.toggle('hide',!isC);
   const r=calc(F);
-  $('fTier').textContent=`${TIERS[r.tier]}｜${r.slot==='day'?'08–20：6/4 分帳':'20–08：掛號費、自費、車資全歸護理師'}`;
+  const emTxt=F.emerg?`緊急訪視加成 +${Math.round(CONFIG.EMERG[r.tier]*100)}%`:'非緊急訪視：不加成';
+  $('fTier').textContent=`${TIERS[r.tier]}｜${emTxt}｜${r.slot==='day'?'08–20：6/4 分帳':'20–08：掛號費、自費、車資全歸護理師'}`;
+  $('supplyWarn').classList.toggle('hide',isC||!SUPPLIES.some(s=>F.supplies[s.id]));
   $('fCat').innerHTML=isC
-    ? `專業C碼・${fmt(r.b.ltc)}`
+    ? `專業C碼・${fmt(r.b.ltc)}${r.ltcCopay?`<br>應收長照部分負擔 ${fmt(r.ltcCopay)}`:''}`
     : (r.nhiPts
-      ? `${payName(F.pay)}・${catName(r.cat)}・${r.nhiPts.toLocaleString()} 點 → ${fmt(r.b.nhi)}<br>掛號費 ${fmt(r.b.reg)}（${TIERS[r.tier]}）`
+      ? `${payName(F.pay)}${F.pay==='nhi'&&F.place==='inst'?'（機構）':''}・${catName(r.cat)}・${r.nhiPts.toLocaleString()} 點${r.addPct?`（含加成 ${Math.round(r.addPct*100)}%）`:''} → ${fmt(r.b.nhi)}
+         <br>掛號費（部分負擔）${F.exempt?'免收':fmt(r.b.reg)}${F.doc?`<br>醫師訪視 ${r.docPts.toLocaleString()} 點${F.exempt?'':`，部分負擔 ${fmt(r.docCopay)}`}`:''}`
       : `<span class="err">${payName(F.pay)} ${catName(r.cat)} 的點數尚未設定，請通知管理者</span>`);
   liveSum();
 }
@@ -388,6 +436,11 @@ $('fLtc').addEventListener('change',e=>{const c=e.target.dataset.code;if(c){F.lt
 $('fDate').onchange=e=>{F.date=e.target.value;F.holiday=isWeekend(F.date);$('fHoliday').checked=F.holiday;renderForm()};
 $('fTime').onchange=e=>{F.time=e.target.value;renderForm()};
 $('fHoliday').onchange=e=>{F.holiday=e.target.checked;renderForm()};
+$('fLeave').onchange=e=>{F.leave=e.target.value;renderForm()};
+$('fEmerg').onchange=e=>{F.emerg=e.target.checked;renderForm()};
+$('fExempt').onchange=e=>{F.exempt=e.target.checked;renderForm()};
+$('fDoc').onchange=e=>{F.doc=e.target.checked;renderForm()};
+$('fChild').onchange=e=>{F.child=e.target.value;renderForm()};
 $('fNurse').onchange=e=>{F.nurse=e.target.value;lsSet('ax_nurse',F.nurse)};
 $('fCase').oninput=e=>F.caseCode=e.target.value.trim();
 $('fFare').oninput=e=>{F.fare=e.target.value;liveSum()};
@@ -400,12 +453,13 @@ $('submitBtn').onclick=async()=>{
   const btn=$('submitBtn'); btn.disabled=true; btn.textContent='送出中…';
   const rec=JSON.parse(JSON.stringify(F));
   rec.custom=rec.custom.filter(c=>c.name||c.amount);
-  if(rec.pay==='c') rec.groups=[]; else rec.ltc={};
+  if(rec.pay==='c'){ rec.groups=[]; rec.doc=false; rec.exempt=false; rec.child=''; } else rec.ltc={};
+  if(rec.pay!=='nhi') rec.place='home';
   rec.id=Date.now().toString(36)+Math.random().toString(36).slice(2,6);
   rec.ts=new Date().toISOString();
   rec.calc=calc(rec);                 // 送出當下的金額與比例一併存檔
   rec.slot=rec.calc.slot; rec.tier=rec.calc.tier;
-  try{await Store.add(rec); toast(`已送出 ${fmt(rec.calc.total)}${ONLINE?'':'（僅存本機）'}`); resetForm({date:F.date,nurse:F.nurse,pay:F.pay});}
+  try{await Store.add(rec); toast(`已送出 ${fmt(rec.calc.total)}${ONLINE?'':'（僅存本機）'}`); resetForm({date:F.date,nurse:F.nurse,pay:F.pay,place:F.place});}
   catch(err){toast('送出失敗：'+err.message)}
   btn.disabled=false; btn.textContent='送出紀錄';
 };
@@ -424,7 +478,7 @@ async function renderRecords(){
       return `<div class="rec"><div class="top"><div><b>${esc(r.caseCode)}</b>・${esc(r.nurse)}
         <div class="meta">${r.date} ${r.time||''}｜${payName(r.pay)}｜${TIERS[c.tier]||slotName(r.slot)}｜${catName(c.cat)}</div></div>
         <div style="text-align:right"><b>${fmt(c.total)}</b><div class="meta">護 ${fmt(c.nurseTotal)}／所 ${fmt(c.agencyTotal)}</div></div></div>
-        <div>${tags.map(t=>`<span class="tag">${esc(t)}</span>`).join('')}${c.b.reg?`<span class="tag">掛號 ${fmt(c.b.reg)}</span>`:''}${c.b.fare?`<span class="tag">車資 ${fmt(c.b.fare)}</span>`:''}</div>
+        <div>${tags.map(t=>`<span class="tag">${esc(t)}</span>`).join('')}${r.emerg?'<span class="tag">緊急訪視</span>':''}${c.place==='inst'?'<span class="tag">機構</span>':''}${r.exempt?'<span class="tag">免部分負擔</span>':''}${c.b.doc?`<span class="tag">醫師訪視 ${fmt(c.b.doc)}</span>`:''}${c.b.reg?`<span class="tag">掛號 ${fmt(c.b.reg)}</span>`:''}${c.b.fare?`<span class="tag">車資 ${fmt(c.b.fare)}</span>`:''}</div>
         <button class="btn sec sm" data-del="${r.id}" style="margin-top:6px">刪除</button></div>`}).join('');
   }catch(err){$('rList').innerHTML=`<div class="err">${esc(err.message)}</div>`}
 }
@@ -439,7 +493,7 @@ $('rMonth').onchange=renderRecords; $('rNurse').onchange=renderRecords;
 let dView='agency';
 const VIEWS=[{id:'nurse',name:'個人'},{id:'agency',name:'居護所'},{id:'items',name:'項目'}];
 function agg(rows){
-  const z=()=>({nhi:0,reg:0,self:0,supply:0,ltc:0,fare:0});
+  const z=()=>({nhi:0,doc:0,reg:0,self:0,supply:0,ltc:0,fare:0});
   const A={visits:rows.length,b:z(),nurse:z(),agency:z(),onsite:0,pts:0,byNurse:{}};
   for(const r of rows){const c=r.calc;
     A.onsite+=c.onsite; A.pts+=c.nhiPts;
@@ -467,7 +521,7 @@ async function renderDash(){
       <div class="kpi"><div class="l">健保總點數</div><div class="v">${A.pts.toLocaleString()}</div></div></div>
     <div class="grid2">
       <div class="card"><h2>收入組成</h2>${stackBar(A.b)}
-        <div class="hint">現場應收估 ${fmt(A.onsite)}（掛號費＋自費＋耗材＋C碼全自費＋車資）</div></div>
+        <div class="hint">現場應收估 ${fmt(A.onsite)}（掛號費＋醫師部分負擔＋自費＋耗材＋C碼部分負擔／全自費＋車資）</div></div>
       <div class="card scroll"><h2>各類別分帳</h2><table><thead><tr><th>類別</th><th>總額</th><th>護理師</th><th>居護所</th></tr></thead><tbody>
         ${BUCKETS.map(k=>`<tr><td><i class="dot" style="background:${k.c}"></i>${k.name}</td><td>${fmt(A.b[k.id])}</td><td>${fmt(A.nurse[k.id])}</td><td>${fmt(A.agency[k.id])}</td></tr>`).join('')}
         </tbody><tfoot><tr><td>合計</td><td>${fmt(sum(A.b))}</td><td>${fmt(sum(A.nurse))}</td><td>${fmt(sum(A.agency))}</td></tr></tfoot></table></div>
@@ -478,9 +532,9 @@ async function renderDash(){
     const max=Math.max(...names.map(n=>sum(A.byNurse[n].nurse)),1);
     body.innerHTML=`<div class="grid2"><div class="card"><h2>護理師本月應領</h2>
       ${names.map(n=>{const v=sum(A.byNurse[n].nurse);return `<div class="hbar"><span class="n">${esc(n)}</span><span class="t"><i style="width:${v/max*100}%"></i></span><span class="v">${fmt(v)}</span></div>`}).join('')}</div>
-    <div class="card scroll"><h2>明細（護理師分得）</h2><table><thead><tr><th>護理師</th><th>次數</th>${BUCKETS.filter(k=>k.id!=='supply').map(k=>`<th>${k.name}</th>`).join('')}<th>應領</th><th>居護所</th></tr></thead><tbody>
-      ${names.map(n=>{const N=A.byNurse[n];return `<tr><td>${esc(n)}</td><td>${N.visits}</td>${BUCKETS.filter(k=>k.id!=='supply').map(k=>`<td>${fmt(N.nurse[k.id])}</td>`).join('')}<td><b>${fmt(sum(N.nurse))}</b></td><td>${fmt(sum(N.agency))}</td></tr>`}).join('')}
-      </tbody><tfoot><tr><td>合計</td><td>${A.visits}</td>${BUCKETS.filter(k=>k.id!=='supply').map(k=>`<td>${fmt(A.nurse[k.id])}</td>`).join('')}<td>${fmt(sum(A.nurse))}</td><td>${fmt(sum(A.agency))}</td></tr></tfoot></table></div></div>`;
+    <div class="card scroll"><h2>明細（護理師分得）</h2><table><thead><tr><th>護理師</th><th>次數</th>${BUCKETS.filter(k=>k.id!=='supply'&&k.id!=='doc').map(k=>`<th>${k.name}</th>`).join('')}<th>應領</th><th>居護所</th></tr></thead><tbody>
+      ${names.map(n=>{const N=A.byNurse[n];return `<tr><td>${esc(n)}</td><td>${N.visits}</td>${BUCKETS.filter(k=>k.id!=='supply'&&k.id!=='doc').map(k=>`<td>${fmt(N.nurse[k.id])}</td>`).join('')}<td><b>${fmt(sum(N.nurse))}</b></td><td>${fmt(sum(N.agency))}</td></tr>`}).join('')}
+      </tbody><tfoot><tr><td>合計</td><td>${A.visits}</td>${BUCKETS.filter(k=>k.id!=='supply'&&k.id!=='doc').map(k=>`<td>${fmt(A.nurse[k.id])}</td>`).join('')}<td>${fmt(sum(A.nurse))}</td><td>${fmt(sum(A.agency))}</td></tr></tfoot></table></div></div>`;
   }
   if(dView==='items'){
     const cats=[0,0,0,0,0],grp={},sup={},ltc={},pay={},tier={};
@@ -490,7 +544,16 @@ async function renderDash(){
       SUPPLIES.forEach(s=>{if(r.supplies[s.id])sup[s.id]=(sup[s.id]||0)+r.supplies[s.id]});
       Object.entries(r.ltc).forEach(([k,v])=>{if(v)ltc[k]=(ltc[k]||0)+1});}
     const list=(title,arr)=>`<div class="card scroll"><h2>${title}</h2><table><thead><tr><th>項目</th><th>次數</th>${arr.some(a=>a[2]!==undefined)?'<th>金額</th>':''}</tr></thead><tbody>${arr.map(a=>`<tr><td>${esc(a[0])}</td><td>${a[1]}</td>${a[2]!==undefined?`<td>${a[2]}</td>`:''}</tr>`).join('')}</tbody></table></div>`;
-    body.innerHTML=`<div class="grid3">`+
+    // 法規提醒：護理訪視每案每月以 2 次為限；每位護理人員每月 100 人次為合理量
+    const perCase={},perNurse={};
+    rows.filter(r=>r.pay==='nhi').forEach(r=>{perCase[r.caseCode]=(perCase[r.caseCode]||0)+1; perNurse[r.nurse]=(perNurse[r.nurse]||0)+1});
+    const overCase=Object.entries(perCase).filter(([,n])=>n>2);
+    const overNurse=Object.entries(perNurse).filter(([,n])=>n>100);
+    const warn=(overCase.length||overNurse.length)?`<div class="card"><h2 class="err">一般健保訪視次數提醒</h2>
+      ${overCase.length?`<div>超過每月 2 次（需檢附護理計畫，或改自費）：${overCase.map(([k,n])=>`<span class="tag">${esc(k)}：${n} 次</span>`).join('')}</div>`:''}
+      ${overNurse.length?`<div style="margin-top:6px">超過每月 100 人次合理量（第 101 次起點數降為超出合理量）：${overNurse.map(([k,n])=>`<span class="tag">${esc(k)}：${n} 次</span>`).join('')}</div>`:''}
+      </div>`:'';
+    body.innerHTML=warn+`<div class="grid3">`+
       `<div class="stackcol">`+list('給付方式',PAYS.map(p=>[p.name,pay[p.id]||0]))+list('時段別',Object.keys(TIERS).map(k=>[TIERS[k],tier[k]||0]))+`</div>`+
       `<div class="stackcol">`+list('健保訪視類別',[1,2,3,4].map(i=>[catName(i),cats[i]]))+list('特殊照護群組',GROUPS.map(g=>[g,grp[g]||0]))+`</div>`+
       `<div class="stackcol">`+list('自費耗材',SUPPLIES.map(s=>[s.name,sup[s.id]||0,fmt((sup[s.id]||0)*s.price)]))+list('專業C碼',LTC.map(l=>[l.code===l.name?l.name:l.code+' '+l.name,ltc[l.code]||0]))+`</div>`+
@@ -501,8 +564,8 @@ $('dMonth').onchange=renderDash;
 
 $('xBtn').onclick=async()=>{
   try{const rows=await Store.list($('dMonth').value);
-    const head=['日期','時間','護理師','個案','給付','時段別','類別','健保點數','健保金額','掛號費','自費服務','耗材','C碼','車資','總額','護理師分得','居護所分得','特殊照護','備註'];
-    const lines=[head,...rows.map(r=>{const c=r.calc;return [r.date,r.time||'',r.nurse,r.caseCode,payName(r.pay),TIERS[c.tier]||slotName(r.slot),catName(c.cat),c.nhiPts,c.b.nhi,c.b.reg||0,c.b.self,c.b.supply,c.b.ltc,c.b.fare,c.total,c.nurseTotal,c.agencyTotal,r.groups.join('、'),r.note]})]
+    const head=['日期','到達','離開','護理師','個案','給付','地點','時段別','緊急訪視','類別','健保點數','健保金額','掛號費','醫師訪視','自費服務','耗材','C碼','C碼部分負擔','車資','總額','護理師分得','居護所分得','現場應收','特殊照護','備註'];
+    const lines=[head,...rows.map(r=>{const c=r.calc;return [r.date,r.time||'',r.leave||'',r.nurse,r.caseCode,payName(r.pay),c.place==='inst'?'機構':'在宅',TIERS[c.tier]||slotName(r.slot),r.emerg?'是':'',catName(c.cat),c.nhiPts,c.b.nhi,c.b.reg||0,c.b.doc||0,c.b.self,c.b.supply,c.b.ltc,c.ltcCopay||0,c.b.fare,c.total,c.nurseTotal,c.agencyTotal,c.onsite,r.groups.join('、'),r.note]})]
       .map(a=>a.map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(','));
     $('xOut').value=lines.join('\n'); $('xOut').classList.remove('hide'); $('xCopy').classList.remove('hide');
   }catch(err){toast(err.message)}
