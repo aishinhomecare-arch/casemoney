@@ -75,6 +75,8 @@ tfoot td{font-weight:700;border-top:2px solid var(--navy)}
 .err{color:#b42318}
 textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
 .hide{display:none!important}
+.modal{position:fixed;inset:0;background:rgba(20,30,50,.45);display:flex;align-items:center;justify-content:center;z-index:60}
+.modal .card{margin:0}
 .grid2,.grid3{display:block}
 
 /* ---------- RWD：平板與桌機 ---------- */
@@ -100,8 +102,10 @@ textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
     <h1>愛馨居家護理所｜訪視計費與分帳</h1>
     <nav>
       <button data-tab="entry" class="on">填寫</button>
-      <button data-tab="records">紀錄</button>
-      <button data-tab="dash">儀表板</button>
+      <button data-tab="records" class="adm hide">紀錄</button>
+      <button data-tab="dash" class="adm hide">儀表板</button>
+      <button id="adminBtn" title="管理者登入">管理者</button>
+      <button id="lockBtn" class="hide" title="鎖定紀錄與儀表板">🔒 鎖定</button>
     </nav>
   </div>
   <div class="banner hide" id="banner"></div>
@@ -123,7 +127,7 @@ textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
           <div><label class="f">離開時間 <span class="pr">（選填）</span></label><input type="time" id="fLeave"></div>
         </div>
         <label class="chk"><input type="checkbox" id="fHoliday"> 例假日／國定假日（週六日自動勾選）</label>
-        <label class="chk"><input type="checkbox" id="fEmerg"> 緊急訪視（符合適應症且有醫囑，健保點數才可依時段加成）</label>
+        <label class="chk"><input type="checkbox" id="fEmerg"> 緊急訪視（符合適應症且有醫囑）</label>
         <div class="pill n" id="fTier"></div>
       </div>
 
@@ -136,14 +140,25 @@ textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
             <label class="f">服務地點</label>
             <div class="seg" id="fPlace"></div>
           </div>
-          <label class="f">本次執行的特殊照護群組（自動判定類別）</label>
-          <div class="seg" id="fGroups"></div>
-          <label class="chk"><input type="checkbox" id="fExempt"> 免部分負擔（福保、榮民、重大傷病、百歲以上）</label>
-          <label class="chk" id="docWrap"><input type="checkbox" id="fDoc"> 醫師同行訪視（另計醫師訪視費）</label>
-          <div class="row" style="margin-top:4px">
-            <div><label class="f">兒童加成</label>
-              <select id="fChild"><option value="">無</option><option value="a">未滿 6 個月（+60%）</option><option value="b">6 個月～未滿 2 歲（+30%）</option><option value="c">2 歲～未滿 7 歲（+20%）</option></select></div>
+          <div id="catWrap">
+            <label class="f">本次執行的特殊照護群組（自動判定類別）</label>
+            <div class="seg" id="fGroups"></div>
+            <div class="row" style="margin-top:4px">
+              <div><label class="f">兒童加成</label>
+                <select id="fChild"><option value="">無</option><option value="a">未滿 6 個月（+60%）</option><option value="b">6 個月～未滿 2 歲（+30%）</option><option value="c">2 歲～未滿 7 歲（+20%）</option></select></div>
+            </div>
           </div>
+          <div id="acuteWrap" class="hide">
+            <label class="f">收案疾病</label>
+            <div class="seg" id="fDz"></div>
+            <div class="row">
+              <div><label class="f">照護第幾天</label><input type="number" inputmode="numeric" min="1" id="fDay" value="1"></div>
+            </div>
+            <label class="chk"><input type="checkbox" id="fSameDay"> 今天已申報過每日護理費（本次只計緊急訪視）</label>
+            <label class="chk"><input type="checkbox" id="fDisaster"> 天然災害停止上班期間（每日護理費 +50%）</label>
+          </div>
+          <label class="chk"><input type="checkbox" id="fExempt"> 免部分負擔（重大傷病、福保、榮民、百歲以上等）</label>
+          <label class="chk" id="docWrap"><input type="checkbox" id="fDoc"> 醫師同行訪視（另計醫師訪視費）</label>
         </div>
         <div id="ltcWrap" class="hide">
           <label class="f">長照身分（決定 C 碼部分負擔）</label>
@@ -157,7 +172,7 @@ textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
 
     <div class="col">
       <div class="card">
-        <h2>自費管路耗材 <small>不分帳，全歸居護所</small></h2>
+        <h2>自費管路耗材</h2>
         <div id="fSupplies"></div>
         <div class="hint err hide" id="supplyWarn">健保個案提醒：依支付標準附表 5.1.4，一般鼻胃管、導尿管、導尿包、敷料等已含在護理訪視點數內；矽質鼻胃管、矽質二叉尿管、氣切管須有醫囑才可另行申報特材。向健保個案另收自費前，請確認收費依據。</div>
       </div>
@@ -213,6 +228,15 @@ textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
   </div>
 </div>
 <div class="toast" id="toast"></div>
+<div class="modal hide" id="pwModal">
+  <form class="card" id="pwForm" style="width:min(340px,90vw)">
+    <h2>管理者登入</h2>
+    <div class="hint" style="margin-top:0">紀錄與儀表板需輸入管理者密碼</div>
+    <input type="password" id="pwInput" autocomplete="current-password" placeholder="管理者密碼" style="margin-top:10px">
+    <div class="err" id="pwMsg" style="font-size:13px;margin-top:6px"></div>
+    <div class="row" style="margin-top:10px"><button type="button" class="btn sec" id="pwCancel">取消</button><button class="btn pri">進入</button></div>
+  </form>
+</div>
 
 <script>
 /* =====================================================================
@@ -220,7 +244,7 @@ textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
    ===================================================================== */
 const CONFIG = {
   API_URL:   'https://script.google.com/macros/s/AKfycbxwzvTt4fqaibAQz27TQwLO-iYYRMuGs8PTPtHv9XKODZnnfkl8p_KTxo1-DooV4wgkyQ/exec',
-  API_TOKEN: '1234',
+  API_TOKEN: 'sky761006',
   NURSES:    ['余易旂','高渝婷','丁怡文','楊珍宜'],
   RATE:      0.95,     // 健保點數 → 健保署支付金額（免部分負擔者以 1.0 計）
   SHARE:     60,       // 08–20 護理師分得 %
@@ -229,8 +253,16 @@ const CONFIG = {
   PTS: {
     nhi:      {1:1103,2:1528,3:1843,4:2158},  // 一般健保・在宅  05301C/05303C/05305C/05321C（115.04.01）
     nhi_inst: {1:882, 2:1222,3:1474,4:1726},  // 一般健保・機構  05342C/05346C/05350C/05354C
-    home:     {1:774, 2:1528,3:2158,4:2200},  // 居家醫療（S2 價目表，待以居整計畫核對）
-    acute:    {1:0,   2:0,   3:0,   4:0}      // 在宅急症：待填
+    home:     {1:774, 2:1528,3:2158,4:2200}   // 居家醫療（S2 價目表，待以居整計畫核對）
+  },
+  // 在宅急症照護試辦計畫（115.05 說明會版）：居家護理所申報「每日護理費」＋「護理人員緊急訪視費」
+  ACUTE: {
+    day:     {home:1843, inst:1474},   // P8416C／P8417C
+    beyond:  {home:1382, inst:1106},   // 目標照護天數外 P8420C／P8445C
+    emerg:   2632,                      // P8434C 護理人員緊急訪視費，限 18:00–08:00，不收部分負擔
+    holiday: 0.2, disaster: 0.5,        // 例假日實地訪視 +20%；天然災害停止上班 +50%
+    dz: { pn:{name:'肺炎',target:10,limit:14}, uti:{name:'尿路感染',target:7,limit:9},
+          sti:{name:'軟組織感染',target:7,limit:9}, oth:{name:'其他感染症（提早出院）',target:30,limit:30} }
   },
   DOC_PTS:   {home:1631, inst:1304},          // 醫師訪視費 05307C／05358C
   // 緊急訪視加成（通則十）：假日 40%、夜間 50%、深夜 70%；假日＋夜間取 50%、假日＋深夜取 70%
@@ -273,6 +305,7 @@ const BUCKETS=[
 const payName=id=>(PAYS.find(p=>p.id===id)||{name:id}).name;
 const slotName=id=>id==='night'?'20–08':'08–20';
 const catName=c=>c?'第'+'一二三四'[c-1]+'類':'C碼';
+const catOf=r=>r.pay==='acute'?'在宅急症':catName(r.calc.cat);
 const $=id=>document.getElementById(id);
 const sum=o=>Object.values(o).reduce((a,c)=>a+c,0);
 const fmt=n=>'$'+Math.round(n).toLocaleString('zh-TW');
@@ -289,12 +322,14 @@ function lsGet(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d
 function lsSet(k,v){MEM[k]=v;try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
 let ONLINE=true;   // 連不上雲端時改為示範模式，並顯示黃色橫幅
 
+// 管理者密碼：只存在本分頁（關閉瀏覽器即失效），由 Apps Script 端驗證
+let ADMIN=(()=>{try{return sessionStorage.getItem('ax_admin')||''}catch(e){return ''}})();
+function setAdmin(v){ADMIN=v;try{v?sessionStorage.setItem('ax_admin',v):sessionStorage.removeItem('ax_admin')}catch(e){}
+  $('lockBtn').classList.toggle('hide',!v); $('adminBtn').classList.toggle('hide',!!v);
+  document.querySelectorAll('nav .adm').forEach(b=>b.classList.toggle('hide',!v))}
 const Store={
   async list(month){
-    if(ONLINE){
-      const u=`${CONFIG.API_URL}?action=list&month=${month}&token=${encodeURIComponent(CONFIG.API_TOKEN)}`;
-      const j=await (await fetch(u)).json(); if(!j.ok) throw new Error(j.error||'讀取失敗'); return j.rows;
-    }
+    if(ONLINE){ const j=await post({action:'list',month,admin:ADMIN}); return j.rows; }
     return lsGet('ax_records',[]).filter(r=>r.date.startsWith(month));
   },
   async add(rec){
@@ -302,7 +337,7 @@ const Store={
     const all=lsGet('ax_records',[]); all.push(rec); lsSet('ax_records',all);
   },
   async del(id){
-    if(ONLINE) return post({action:'delete',id});
+    if(ONLINE) return post({action:'delete',id,admin:ADMIN});
     lsSet('ax_records',lsGet('ax_records',[]).filter(r=>r.id!==id));
   }
 };
@@ -313,7 +348,7 @@ async function post(body){
 }
 function banner(t){const b=$('banner'); b.textContent=t||''; b.classList.toggle('hide',!t)}
 async function checkConnection(){
-  try{ await Store.list(today().slice(0,7)); banner(''); }
+  try{ await post({action:'ping'}); banner(''); }
   catch(err){
     if(/通行碼/.test(err.message)){ banner('⚠ 雲端通行碼不符，請管理者檢查 index.html 的 API_TOKEN'); return; }
     ONLINE=false; banner('⚠ 目前連不上雲端試算表：示範模式，紀錄只存在這台裝置，不會上傳');
@@ -341,10 +376,24 @@ function calc(f){
   const isC=f.pay==='c';
   const {slot,tier}=timeInfo(f);
   const cat=isC?0:Math.min(4,f.groups.length+1);
-  const place=f.pay==='nhi'?(f.place||'home'):'home';
+  const place=(f.pay==='nhi'||f.pay==='acute')?(f.place||'home'):'home';
   const b={nhi:0,doc:0,reg:0,self:0,supply:0,ltc:0,fare:0};
-  let nhiPts=0, docPts=0, docCopay=0, ltcSelf=0, ltcCopay=0, addPct=0;
-  if(!isC){
+  let nhiPts=0, docPts=0, docCopay=0, ltcSelf=0, ltcCopay=0, addPct=0, acute=null;
+  if(f.pay==='acute'){
+    const A=CONFIG.ACUTE, dz=A.dz[f.dz||'pn'], day=Math.max(1,Number(f.day)||1);
+    const copay=f.exempt?0:CONFIG.COPAY, rate=f.exempt?1:CONFIG.RATE;
+    let nursePts=0;
+    if(!f.sameDay && day<=dz.limit){
+      addPct=Math.max(f.holiday?A.holiday:0, f.disaster?A.disaster:0);
+      nursePts=Math.round((day>dz.target?A.beyond[place]:A.day[place])*(1+addPct));
+    }
+    const ah=Math.floor(toMin(f.time||'09:00')/60), emOk=!!f.emerg&&(ah>=18||ah<8);
+    const emerPts=emOk?A.emerg:0;
+    nhiPts=nursePts+emerPts;
+    b.reg=Math.ceil(nursePts*copay);                    // 部分負擔：每日護理費 5%
+    b.nhi=Math.round(nursePts*rate)+emerPts;            // 緊急訪視費不收部分負擔
+    acute={dz:dz.name,day,nursePts,emerPts,emOk,over:day>dz.limit,beyond:day>dz.target};
+  } else if(!isC){
     const tbl=f.pay==='nhi'&&place==='inst'?CONFIG.PTS.nhi_inst:CONFIG.PTS[f.pay];
     addPct=(f.emerg?CONFIG.EMERG[tier]:0)+(CONFIG.CHILD[f.child||'']||0);
     nhiPts=Math.round((Number(tbl?.[cat])||0)*(1+addPct));
@@ -368,7 +417,7 @@ function calc(f){
   const pct={nhi:S, ltc:S, doc:0, reg:night?100:S, self:night?100:S, fare:night?100:S, supply:0};
   const nurse={},agency={};
   for(const k in b){nurse[k]=Math.round(b[k]*pct[k]/100); agency[k]=b[k]-nurse[k];}
-  return {cat,slot,tier,place,addPct,nhiPts,docPts,docCopay,ltcCopay,b,nurse,agency,pct,
+  return {cat,slot,tier,place,addPct,acute,nhiPts,docPts,docCopay,ltcCopay,b,nurse,agency,pct,
     total:sum(b),nurseTotal:sum(nurse),agencyTotal:sum(agency),
     onsite:b.reg+docCopay+b.self+b.supply+ltcSelf+ltcCopay+b.fare, rate:CONFIG.RATE};
 }
@@ -379,9 +428,11 @@ function resetForm(keep){
   const d=keep?.date||today();
   F={date:d,time:nowTime(),leave:'',holiday:isWeekend(d),emerg:false,nurse:keep?.nurse||lsGet('ax_nurse',CONFIG.NURSES[0]),
      caseCode:'',pay:keep?.pay||'nhi',place:keep?.place||'home',exempt:false,doc:false,child:'',house:'gen',
+     dz:keep?.dz||'pn',day:'1',sameDay:false,disaster:false,
      groups:[],supplies:{},other:{},custom:[],ltc:{},fare:'',note:''};
   $('fDate').value=F.date; $('fTime').value=F.time; $('fLeave').value=''; $('fHoliday').checked=F.holiday;
   $('fEmerg').checked=false; $('fExempt').checked=false; $('fDoc').checked=false; $('fChild').value='';
+  $('fDay').value='1'; $('fSameDay').checked=false; $('fDisaster').checked=false;
   $('fCase').value=''; $('fFare').value=''; $('fNote').value='';
   renderForm();
 }
@@ -395,13 +446,16 @@ function stepper(list,store,el){
   el.onclick=e=>{const id=e.target.dataset.id; if(!id)return; store[id]=Math.max(0,(store[id]||0)+Number(e.target.dataset.d)); renderForm()};
 }
 function liveSum(){const r=calc(F);
-  $('liveSum').innerHTML=`本次合計 <b>${fmt(r.total)}</b><br>護理師 ${fmt(r.nurseTotal)}｜居護所 ${fmt(r.agencyTotal)}`}
+  $('liveSum').innerHTML=`本次合計 <b>${fmt(r.total)}</b>`}
 function renderForm(){
   $('fNurse').innerHTML=CONFIG.NURSES.map(n=>`<option ${n===F.nurse?'selected':''}>${esc(n)}</option>`).join('');
   seg($('fPay'),PAYS,F.pay,v=>{F.pay=v;renderForm()});
   seg($('fPlace'),PLACES,F.place,v=>{F.place=v;renderForm()});
   seg($('fHouse'),HOUSES,F.house,v=>{F.house=v;renderForm()});
-  $('placeWrap').classList.toggle('hide',F.pay!=='nhi');
+  $('placeWrap').classList.toggle('hide',!(F.pay==='nhi'||F.pay==='acute'));
+  $('catWrap').classList.toggle('hide',F.pay==='acute');
+  $('acuteWrap').classList.toggle('hide',F.pay!=='acute');
+  seg($('fDz'),Object.entries(CONFIG.ACUTE.dz).map(([id,d])=>({id,name:d.name})),F.dz,v=>{F.dz=v;renderForm()});
   $('docWrap').classList.toggle('hide',F.pay!=='nhi');
   if(F.pay!=='nhi'){ F.doc=false; $('fDoc').checked=false; }
   seg($('fGroups'),GROUPS.map(g=>({id:g,name:g})),F.groups,v=>{
@@ -418,10 +472,18 @@ function renderForm(){
   $('groupsWrap').classList.toggle('hide',isC);
   $('ltcWrap').classList.toggle('hide',!isC);
   const r=calc(F);
-  const emTxt=F.emerg?`緊急訪視加成 +${Math.round(CONFIG.EMERG[r.tier]*100)}%`:'非緊急訪視：不加成';
-  $('fTier').textContent=`${TIERS[r.tier]}｜${emTxt}｜${r.slot==='day'?'08–20：6/4 分帳':'20–08：掛號費、自費、車資全歸護理師'}`;
+  const emTxt=F.pay==='acute'
+    ? (F.emerg?(r.acute.emOk?'護理人員緊急訪視費 2,632 點':'緊急訪視限 18:00–08:00 抵達，本次不計'):'非緊急訪視')
+    : (F.emerg?`緊急訪視加成 +${Math.round(CONFIG.EMERG[r.tier]*100)}%`:'非緊急訪視：不加成');
+  $('fTier').textContent=isC?TIERS[r.tier]:`${TIERS[r.tier]}｜${emTxt}`;
   $('supplyWarn').classList.toggle('hide',isC||!SUPPLIES.some(s=>F.supplies[s.id]));
-  $('fCat').innerHTML=isC
+  const a=r.acute;
+  $('fCat').innerHTML=F.pay==='acute'
+    ? `在宅急症・${a.dz} 第 ${a.day} 天${a.over?'<br><span class="err">已超過上限天數，健保不予支付</span>':''}
+       ${a.nursePts?`<br>每日護理費 ${a.nursePts.toLocaleString()} 點${a.beyond?'（目標天數外）':''}${r.addPct?`（含加成 ${Math.round(r.addPct*100)}%）`:''}`:''}
+       ${a.emerPts?`<br>護理人員緊急訪視 ${a.emerPts.toLocaleString()} 點`:''}
+       <br>健保 ${fmt(r.b.nhi)}｜掛號費（部分負擔）${F.exempt?'免收':fmt(r.b.reg)}`
+    : isC
     ? `專業C碼・${fmt(r.b.ltc)}${r.ltcCopay?`<br>應收長照部分負擔 ${fmt(r.ltcCopay)}`:''}`
     : (r.nhiPts
       ? `${payName(F.pay)}${F.pay==='nhi'&&F.place==='inst'?'（機構）':''}・${catName(r.cat)}・${r.nhiPts.toLocaleString()} 點${r.addPct?`（含加成 ${Math.round(r.addPct*100)}%）`:''} → ${fmt(r.b.nhi)}
@@ -441,6 +503,9 @@ $('fEmerg').onchange=e=>{F.emerg=e.target.checked;renderForm()};
 $('fExempt').onchange=e=>{F.exempt=e.target.checked;renderForm()};
 $('fDoc').onchange=e=>{F.doc=e.target.checked;renderForm()};
 $('fChild').onchange=e=>{F.child=e.target.value;renderForm()};
+$('fDay').oninput=e=>{F.day=e.target.value;renderForm()};
+$('fSameDay').onchange=e=>{F.sameDay=e.target.checked;renderForm()};
+$('fDisaster').onchange=e=>{F.disaster=e.target.checked;renderForm()};
 $('fNurse').onchange=e=>{F.nurse=e.target.value;lsSet('ax_nurse',F.nurse)};
 $('fCase').oninput=e=>F.caseCode=e.target.value.trim();
 $('fFare').oninput=e=>{F.fare=e.target.value;liveSum()};
@@ -454,12 +519,13 @@ $('submitBtn').onclick=async()=>{
   const rec=JSON.parse(JSON.stringify(F));
   rec.custom=rec.custom.filter(c=>c.name||c.amount);
   if(rec.pay==='c'){ rec.groups=[]; rec.doc=false; rec.exempt=false; rec.child=''; } else rec.ltc={};
-  if(rec.pay!=='nhi') rec.place='home';
+  if(rec.pay!=='nhi'&&rec.pay!=='acute') rec.place='home';
+  if(rec.pay!=='acute'){ delete rec.dz; delete rec.day; delete rec.sameDay; delete rec.disaster; } else { rec.groups=[]; rec.child=''; }
   rec.id=Date.now().toString(36)+Math.random().toString(36).slice(2,6);
   rec.ts=new Date().toISOString();
   rec.calc=calc(rec);                 // 送出當下的金額與比例一併存檔
   rec.slot=rec.calc.slot; rec.tier=rec.calc.tier;
-  try{await Store.add(rec); toast(`已送出 ${fmt(rec.calc.total)}${ONLINE?'':'（僅存本機）'}`); resetForm({date:F.date,nurse:F.nurse,pay:F.pay,place:F.place});}
+  try{await Store.add(rec); toast(`已送出 ${fmt(rec.calc.total)}${ONLINE?'':'（僅存本機）'}`); resetForm({date:F.date,nurse:F.nurse,pay:F.pay,place:F.place,dz:F.dz});}
   catch(err){toast('送出失敗：'+err.message)}
   btn.disabled=false; btn.textContent='送出紀錄';
 };
@@ -476,11 +542,11 @@ async function renderRecords(){
       const tags=[...r.groups,...SUPPLIES.filter(s=>r.supplies[s.id]).map(s=>s.name.replace('耗材組','')+'×'+r.supplies[s.id]),
         ...Object.entries(r.ltc).filter(([,v])=>v).map(([k])=>k),...r.custom.map(x=>x.name)];
       return `<div class="rec"><div class="top"><div><b>${esc(r.caseCode)}</b>・${esc(r.nurse)}
-        <div class="meta">${r.date} ${r.time||''}｜${payName(r.pay)}｜${TIERS[c.tier]||slotName(r.slot)}｜${catName(c.cat)}</div></div>
+        <div class="meta">${r.date} ${r.time||''}｜${payName(r.pay)}｜${TIERS[c.tier]||slotName(r.slot)}｜${catOf(r)}${r.pay==='acute'?` ${esc(c.acute?.dz||'')} 第${c.acute?.day||''}天`:''}</div></div>
         <div style="text-align:right"><b>${fmt(c.total)}</b><div class="meta">護 ${fmt(c.nurseTotal)}／所 ${fmt(c.agencyTotal)}</div></div></div>
         <div>${tags.map(t=>`<span class="tag">${esc(t)}</span>`).join('')}${r.emerg?'<span class="tag">緊急訪視</span>':''}${c.place==='inst'?'<span class="tag">機構</span>':''}${r.exempt?'<span class="tag">免部分負擔</span>':''}${c.b.doc?`<span class="tag">醫師訪視 ${fmt(c.b.doc)}</span>`:''}${c.b.reg?`<span class="tag">掛號 ${fmt(c.b.reg)}</span>`:''}${c.b.fare?`<span class="tag">車資 ${fmt(c.b.fare)}</span>`:''}</div>
         <button class="btn sec sm" data-del="${r.id}" style="margin-top:6px">刪除</button></div>`}).join('');
-  }catch(err){$('rList').innerHTML=`<div class="err">${esc(err.message)}</div>`}
+  }catch(err){ if(!adminFail(err,'records')) $('rList').innerHTML=`<div class="err">${esc(err.message)}</div>`}
 }
 $('rList').onclick=async e=>{
   const id=e.target.dataset.del; if(!id)return;
@@ -509,7 +575,7 @@ function stackBar(b){const t=sum(b)||1;
 async function renderDash(){
   seg($('dView'),VIEWS,dView,v=>{dView=v;renderDash()});
   const body=$('dBody'); body.innerHTML='<div class="card">讀取中…</div>';
-  let rows; try{rows=await Store.list($('dMonth').value)}catch(err){body.innerHTML=`<div class="card err">${esc(err.message)}</div>`;return}
+  let rows; try{rows=await Store.list($('dMonth').value)}catch(err){ if(!adminFail(err,'dash')) body.innerHTML=`<div class="card err">${esc(err.message)}</div>`;return}
   if(!rows.length){body.innerHTML='<div class="card hint">這個月份還沒有紀錄</div>';return}
   const A=agg(rows);
   if(dView==='agency'){
@@ -565,7 +631,7 @@ $('dMonth').onchange=renderDash;
 $('xBtn').onclick=async()=>{
   try{const rows=await Store.list($('dMonth').value);
     const head=['日期','到達','離開','護理師','個案','給付','地點','時段別','緊急訪視','類別','健保點數','健保金額','掛號費','醫師訪視','自費服務','耗材','C碼','C碼部分負擔','車資','總額','護理師分得','居護所分得','現場應收','特殊照護','備註'];
-    const lines=[head,...rows.map(r=>{const c=r.calc;return [r.date,r.time||'',r.leave||'',r.nurse,r.caseCode,payName(r.pay),c.place==='inst'?'機構':'在宅',TIERS[c.tier]||slotName(r.slot),r.emerg?'是':'',catName(c.cat),c.nhiPts,c.b.nhi,c.b.reg||0,c.b.doc||0,c.b.self,c.b.supply,c.b.ltc,c.ltcCopay||0,c.b.fare,c.total,c.nurseTotal,c.agencyTotal,c.onsite,r.groups.join('、'),r.note]})]
+    const lines=[head,...rows.map(r=>{const c=r.calc;return [r.date,r.time||'',r.leave||'',r.nurse,r.caseCode,payName(r.pay),c.place==='inst'?'機構':'在宅',TIERS[c.tier]||slotName(r.slot),r.emerg?'是':'',catOf(r)+(c.acute?` ${c.acute.dz} 第${c.acute.day}天`:''),c.nhiPts,c.b.nhi,c.b.reg||0,c.b.doc||0,c.b.self,c.b.supply,c.b.ltc,c.ltcCopay||0,c.b.fare,c.total,c.nurseTotal,c.agencyTotal,c.onsite,r.groups.join('、'),r.note]})]
       .map(a=>a.map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(','));
     $('xOut').value=lines.join('\n'); $('xOut').classList.remove('hide'); $('xCopy').classList.remove('hide');
   }catch(err){toast(err.message)}
@@ -573,15 +639,30 @@ $('xBtn').onclick=async()=>{
 $('xCopy').onclick=async()=>{try{await navigator.clipboard.writeText($('xOut').value);toast('已複製，可貼到 Excel')}catch(e){$('xOut').select();toast('請長按全選後複製')}};
 
 /* ================= 初始化 ================= */
-document.querySelector('nav').onclick=e=>{const t=e.target.dataset.tab;if(!t)return;
+let pendingTab=null;
+function askAdmin(tab,msg){
+  pendingTab=tab; $('pwMsg').textContent=msg||''; $('pwInput').value='';
+  $('pwModal').classList.remove('hide'); setTimeout(()=>$('pwInput').focus(),50);
+}
+$('pwCancel').onclick=()=>{$('pwModal').classList.add('hide'); pendingTab=null};
+$('pwForm').onsubmit=e=>{e.preventDefault(); const v=$('pwInput').value.trim(); if(!v)return;
+  setAdmin(v); $('pwModal').classList.add('hide'); const t=pendingTab; pendingTab=null; showTab(t)};
+$('lockBtn').onclick=()=>{setAdmin(''); showTab('entry'); toast('已鎖定')};
+$('adminBtn').onclick=()=>askAdmin('dash');
+// 伺服器回「管理者密碼錯誤」時，清掉密碼並再問一次
+function adminFail(err,tab){ if(/管理者密碼/.test(err.message)){ setAdmin(''); showTab('entry'); askAdmin(tab,'密碼錯誤，請再輸入一次'); return true } return false }
+document.querySelector('nav').onclick=e=>{const t=e.target.dataset.tab;if(!t)return; showTab(t)};
+function showTab(t){
+  if(t!=='entry' && !ADMIN){ askAdmin(t); return; }
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.tab===t));
   document.querySelectorAll('main>section').forEach(s=>s.classList.toggle('hide',s.id!=='tab-'+t));
   $('entryBar').classList.toggle('hide',t!=='entry');
   if(t==='records')renderRecords(); if(t==='dash')renderDash();
-  window.scrollTo(0,0);};
+  window.scrollTo(0,0);}
 $('rNurse').innerHTML='<option value="">全部</option>'+CONFIG.NURSES.map(n=>`<option>${esc(n)}</option>`).join('');
 ['rMonth','dMonth'].forEach(id=>$(id).value=today().slice(0,7));
 if(!CONFIG.NURSES.includes(lsGet('ax_nurse',''))) lsSet('ax_nurse',CONFIG.NURSES[0]);
+setAdmin(ADMIN);
 resetForm();
 checkConnection();
 </script>
