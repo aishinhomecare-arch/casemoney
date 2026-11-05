@@ -512,7 +512,7 @@ $('fFare').oninput=e=>{F.fare=e.target.value;liveSum()};
 $('fNote').oninput=e=>F.note=e.target.value;
 
 $('submitBtn').onclick=async()=>{
-  if(!F.caseCode) return toast('請填個案代號');
+  if(!F.caseCode) return toast('請填個案姓名');
   if(!F.time) return toast('請填到達時間');
   if(F.pay==='c' && !Object.values(F.ltc).some(Boolean)) return toast('請選擇 C 碼項目');
   const btn=$('submitBtn'); btn.disabled=true; btn.textContent='送出中…';
