@@ -77,6 +77,11 @@ textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
 .hide{display:none!important}
 .modal{position:fixed;inset:0;background:rgba(20,30,50,.45);display:flex;align-items:center;justify-content:center;z-index:60}
 .modal .card{margin:0}
+.pb{display:flex;align-items:center;gap:6px;justify-content:flex-end}
+.pb .t{width:70px;height:8px;background:#f1eef0;border-radius:4px;overflow:hidden;flex:none}
+.pb .t i{display:block;height:100%;background:var(--pink)}
+.kpi .s{font-size:12px;color:var(--muted)}
+.day{display:flex;justify-content:space-between;background:#f6f2f4;border-radius:8px;padding:6px 10px;margin-top:10px;font-size:13px}
 .grid2,.grid3{display:block}
 
 /* ---------- RWD：平板與桌機 ---------- */
@@ -102,6 +107,7 @@ textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
     <h1>愛馨居家護理所｜訪視計費與分帳</h1>
     <nav>
       <button data-tab="entry" class="on">填寫</button>
+      <button data-tab="mine">我的業績</button>
       <button data-tab="records" class="adm hide">紀錄</button>
       <button data-tab="dash" class="adm hide">儀表板</button>
       <button id="adminBtn" title="管理者登入">管理者</button>
@@ -115,11 +121,15 @@ textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
   <!-- ========== 填寫 ========== -->
   <section id="tab-entry">
     <div class="col">
+      <div class="card hide" id="sentCard" style="background:#f2f8f4;border-color:#cfe6d6">
+        <h2 style="color:#2e6b45">今天已送出 <span id="sentCount"></span> 筆 <small>（這台裝置）</small></h2>
+        <div id="sentList"></div>
+      </div>
       <div class="card">
         <h2>基本資料</h2>
         <div class="row">
           <div><label class="f">護理師</label><select id="fNurse"></select></div>
-          <div><label class="f">個案姓名 <span class="pr">（不填代碼）</span></label><input id="fCase" placeholder="例：A023"></div>
+          <div><label class="f">個案姓名</label><input id="fCase" placeholder="例：王小明" autocomplete="off"></div>
         </div>
         <div class="row">
           <div><label class="f">訪視日期</label><input type="date" id="fDate"></div>
@@ -193,6 +203,17 @@ textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
   </section>
 
   <!-- ========== 紀錄 ========== -->
+  <section id="tab-mine" class="hide">
+    <div class="card">
+      <div class="row">
+        <div><label class="f">護理師</label><select id="mNurse"></select></div>
+        <div><label class="f">月份</label><input type="month" id="mMonth"></div>
+      </div>
+      <div class="hint">顯示整體服務收入（未扣抽成），以及占全所的比例（貢獻度）。</div>
+    </div>
+    <div id="mBody"></div>
+  </section>
+
   <section id="tab-records" class="hide">
     <div class="card">
       <div class="row">
@@ -228,6 +249,21 @@ textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
   </div>
 </div>
 <div class="toast" id="toast"></div>
+<div class="modal hide" id="okModal">
+  <div class="card" style="width:min(340px,90vw);text-align:center">
+    <div style="font-size:44px;line-height:1;color:#2e8b57">✔</div>
+    <h2 style="margin:8px 0">儲存成功</h2>
+    <div id="okBody" style="font-size:14px"></div>
+    <button class="btn pri" id="okBtn" style="width:100%;margin-top:14px">好，繼續填下一筆</button>
+  </div>
+</div>
+<div class="modal hide" id="dupModal">
+  <div class="card" style="width:min(360px,92vw)">
+    <h2 class="err">可能重複輸入</h2>
+    <div id="dupBody" style="font-size:14px"></div>
+    <div class="row" style="margin-top:12px"><button class="btn sec" id="dupCancel">取消</button><button class="btn pri" id="dupOk">確定再存一筆</button></div>
+  </div>
+</div>
 <div class="modal hide" id="pwModal">
   <form class="card" id="pwForm" style="width:min(340px,90vw)">
     <h2>管理者登入</h2>
@@ -332,9 +368,21 @@ const Store={
     if(ONLINE){ const j=await post({action:'list',month,admin:ADMIN}); return j.rows; }
     return lsGet('ax_records',[]).filter(r=>r.date.startsWith(month));
   },
-  async add(rec){
-    if(ONLINE) return post({action:'add',record:rec});
-    const all=lsGet('ax_records',[]); all.push(rec); lsSet('ax_records',all);
+  async add(rec,force){
+    if(ONLINE) return post({action:'add',record:rec,force:!!force});
+    const all=lsGet('ax_records',[]);
+    if(all.some(r=>r.id===rec.id)) return {ok:true};
+    const hit=all.filter(r=>r.date===rec.date&&r.caseCode===rec.caseCode);
+    if(hit.length&&!force) return {ok:false,dup:true,existing:hit.map(r=>({nurse:r.nurse,time:r.time,total:r.calc.total}))};
+    all.push(rec); lsSet('ax_records',all); return {ok:true};
+  },
+  async mine(month,nurse){   // 公開：只回傳該護理師自己的紀錄，姓名遮罩、不含分帳與備註
+    if(ONLINE){ const j=await post({action:'mine',month,nurse}); return j.rows; }
+    return lsGet('ax_records',[]).filter(r=>r.date.startsWith(month)&&r.nurse===nurse).map(sanitize);
+  },
+  async stats(month){   // 公開：只回傳加總數字，不含個案姓名與分帳
+    if(ONLINE){ const j=await post({action:'stats',month}); return j.stats; }
+    return aggStats(lsGet('ax_records',[]).filter(r=>r.date.startsWith(month)));
   },
   async del(id){
     if(ONLINE) return post({action:'delete',id,admin:ADMIN});
@@ -344,7 +392,7 @@ const Store={
 async function post(body){
   body.token=CONFIG.API_TOKEN;
   const j=await (await fetch(CONFIG.API_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(body)})).json();
-  if(!j.ok) throw new Error(j.error||'寫入失敗'); return j;
+  if(!j.ok && !j.dup) throw new Error(j.error||'寫入失敗'); return j;
 }
 function banner(t){const b=$('banner'); b.textContent=t||''; b.classList.toggle('hide',!t)}
 async function checkConnection(){
@@ -506,29 +554,141 @@ $('fChild').onchange=e=>{F.child=e.target.value;renderForm()};
 $('fDay').oninput=e=>{F.day=e.target.value;renderForm()};
 $('fSameDay').onchange=e=>{F.sameDay=e.target.checked;renderForm()};
 $('fDisaster').onchange=e=>{F.disaster=e.target.checked;renderForm()};
-$('fNurse').onchange=e=>{F.nurse=e.target.value;lsSet('ax_nurse',F.nurse)};
-$('fCase').oninput=e=>F.caseCode=e.target.value.trim();
+$('fNurse').onchange=e=>{F.nurse=e.target.value;lsSet('ax_nurse',F.nurse);renderSent()};
+$('fCase').oninput=e=>{F.caseCode=e.target.value; pendingId=null};
 $('fFare').oninput=e=>{F.fare=e.target.value;liveSum()};
 $('fNote').oninput=e=>F.note=e.target.value;
 
-$('submitBtn').onclick=async()=>{
-  if(!F.caseCode) return toast('請填個案姓名');
-  if(!F.time) return toast('請填到達時間');
-  if(F.pay==='c' && !Object.values(F.ltc).some(Boolean)) return toast('請選擇 C 碼項目');
-  const btn=$('submitBtn'); btn.disabled=true; btn.textContent='送出中…';
+// 防重複：①送出中鎖住按鈕 ②同一筆重送沿用同一個 id（伺服器只存一次）
+//         ③同一天同一位個案已有紀錄時先確認 ④顯示今天已送出清單
+let pendingId=null;
+$('submitBtn').onclick=()=>submitRecord(false);
+function buildRec(){
   const rec=JSON.parse(JSON.stringify(F));
+  rec.caseCode=rec.caseCode.trim();
   rec.custom=rec.custom.filter(c=>c.name||c.amount);
   if(rec.pay==='c'){ rec.groups=[]; rec.doc=false; rec.exempt=false; rec.child=''; } else rec.ltc={};
   if(rec.pay!=='nhi'&&rec.pay!=='acute') rec.place='home';
   if(rec.pay!=='acute'){ delete rec.dz; delete rec.day; delete rec.sameDay; delete rec.disaster; } else { rec.groups=[]; rec.child=''; }
-  rec.id=Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+  rec.id=pendingId||(pendingId=Date.now().toString(36)+Math.random().toString(36).slice(2,6));
   rec.ts=new Date().toISOString();
-  rec.calc=calc(rec);                 // 送出當下的金額與比例一併存檔
+  rec.calc=calc(rec);
   rec.slot=rec.calc.slot; rec.tier=rec.calc.tier;
-  try{await Store.add(rec); toast(`已送出 ${fmt(rec.calc.total)}${ONLINE?'':'（僅存本機）'}`); resetForm({date:F.date,nurse:F.nurse,pay:F.pay,place:F.place,dz:F.dz});}
-  catch(err){toast('送出失敗：'+err.message)}
+  return rec;
+}
+async function submitRecord(force){
+  if(!F.caseCode.trim()) return toast('請填個案姓名');
+  if(!F.time) return toast('請填到達時間');
+  if(F.pay==='c' && !Object.values(F.ltc).some(Boolean)) return toast('請選擇 C 碼項目');
+  const btn=$('submitBtn'); if(btn.disabled) return;
+  btn.disabled=true; btn.textContent='儲存中…';
+  const rec=buildRec();
+  try{
+    const res=await Store.add(rec,force);
+    if(res&&res.dup){ showDup(rec,res.existing||[]); }
+    else{
+      pendingId=null; addSent(rec); showOk(rec);
+      resetForm({date:F.date,nurse:F.nurse,pay:F.pay,place:F.place,dz:F.dz});
+    }
+  }catch(err){ toast('儲存失敗，請再按一次送出：'+err.message) }   // 重送會用同一個 id，不會變兩筆
   btn.disabled=false; btn.textContent='送出紀錄';
-};
+}
+function showOk(rec){
+  $('okBody').innerHTML=`<b>${esc(rec.caseCode)}</b><br>${rec.date} ${rec.time}｜${esc(payName(rec.pay))}<br>本次合計 <b>${fmt(rec.calc.total)}</b>${ONLINE?'':'<div class="err" style="font-size:13px;margin-top:6px">示範模式：只存在這台裝置</div>'}`;
+  $('okModal').classList.remove('hide');
+}
+$('okBtn').onclick=()=>{$('okModal').classList.add('hide'); window.scrollTo(0,0); $('fCase').focus()};
+function showDup(rec,ex){
+  $('dupBody').innerHTML=`<b>${esc(rec.caseCode)}</b> 在 ${rec.date} 已經有 ${ex.length} 筆紀錄：<div style="margin:8px 0">${ex.map(e=>`<span class="tag">${esc(e.nurse)} ${esc(e.time||'')} ${fmt(e.total||0)}</span>`).join('')}</div>如果是同一次訪視，請按「取消」，不要重複送出。<br>如果真的是同一天第二次訪視（例如緊急訪視），再按「確定再存一筆」。`;
+  $('dupModal').classList.remove('hide');
+}
+$('dupCancel').onclick=()=>{$('dupModal').classList.add('hide'); pendingId=null; toast('已取消，沒有重複儲存')};
+$('dupOk').onclick=()=>{$('dupModal').classList.add('hide'); submitRecord(true)};
+// 今天已送出（本機）
+function addSent(rec){const L=lsGet('ax_sent',[]).filter(x=>x.date>=today()); L.push({id:rec.id,date:rec.date,time:rec.time,name:rec.caseCode,nurse:rec.nurse,total:rec.calc.total}); lsSet('ax_sent',L); renderSent()}
+function renderSent(){
+  const L=lsGet('ax_sent',[]).filter(x=>x.date===today()&&x.nurse===F.nurse);
+  $('sentCard').classList.toggle('hide',!L.length);
+  $('sentList').innerHTML=L.slice().reverse().map(x=>`<span class="tag">${esc(x.time)} ${esc(x.name)} ${fmt(x.total)}</span>`).join('');
+  $('sentCount').textContent=L.length;
+}
+
+/* ================= 我的業績（公開） ================= */
+// 與 Code.gs 的 mask_()/sanitize_() 相同
+function maskName(n){n=String(n||'').trim();const a=[...n];if(a.length<=1)return n;if(a.length===2)return a[0]+'○';return a[0]+'○'.repeat(a.length-2)+a[a.length-1]}
+function sanitize(r){const x=JSON.parse(JSON.stringify(r));x.caseCode=maskName(x.caseCode);delete x.note;
+  if(x.calc){delete x.calc.nurse;delete x.calc.agency;delete x.calc.pct;delete x.calc.nurseTotal;delete x.calc.agencyTotal}return x}
+function recTags(r){const c=r.calc||{},b=c.b||{};
+  return [...(r.groups||[]),...SUPPLIES.filter(s=>(r.supplies||{})[s.id]).map(s=>s.name.replace('耗材組','')+'×'+r.supplies[s.id]),
+    ...Object.entries(r.ltc||{}).filter(([,v])=>v).map(([k,v])=>k+(v==='self'?'(自費)':'')),...(r.custom||[]).map(x=>x.name).filter(Boolean),
+    ...OTHER.filter(o=>(r.other||{})[o.id]).map(o=>o.name),
+    ...(r.emerg?['緊急訪視']:[]),...(c.place==='inst'?['機構']:[]),...(r.exempt?['免部分負擔']:[]),
+    ...(b.doc?['醫師訪視']:[]),...(b.reg?['掛號 '+fmt(b.reg)]:[]),...(b.fare?['車資 '+fmt(b.fare)]:[])]}
+const pct=x=>(isFinite(x)?Math.round(x*1000)/10:0)+'%';
+const pbar=x=>`<span class="pb"><span class="t"><i style="width:${Math.min(100,(x||0)*100)}%"></i></span>${pct(x||0)}</span>`;
+// 與 Code.gs 的 stats_() 相同邏輯
+function aggStats(rows){
+  const mk=()=>({visits:0,total:0,b:{nhi:0,doc:0,reg:0,self:0,supply:0,ltc:0,fare:0},pay:{},cat:{},groups:{},supplies:{},ltc:{},emerg:0,acute:{}});
+  const all=mk(), nurses={};
+  rows.forEach(r=>{
+    const c=r.calc; if(!nurses[r.nurse]) nurses[r.nurse]=mk();
+    [all,nurses[r.nurse]].forEach(A=>{
+      A.visits++; A.total+=c.total||0;
+      Object.keys(A.b).forEach(k=>A.b[k]+=(c.b&&c.b[k])||0);
+      A.pay[r.pay]=(A.pay[r.pay]||0)+1;
+      if(r.pay!=='c'&&r.pay!=='acute') A.cat[c.cat]=(A.cat[c.cat]||0)+1;
+      (r.groups||[]).forEach(g=>A.groups[g]=(A.groups[g]||0)+1);
+      Object.keys(r.supplies||{}).forEach(k=>{if(r.supplies[k]) A.supplies[k]=(A.supplies[k]||0)+r.supplies[k]});
+      Object.keys(r.ltc||{}).forEach(k=>{if(r.ltc[k]) A.ltc[k]=(A.ltc[k]||0)+1});
+      if(r.emerg) A.emerg++;
+      if(c.acute) A.acute[c.acute.dz]=(A.acute[c.acute.dz]||0)+1;
+    });
+  });
+  return {all,nurses};
+}
+async function renderMine(){
+  const m=$('mMonth').value, n=$('mNurse').value, body=$('mBody');
+  body.innerHTML='<div class="card">讀取中…</div>';
+  let S; try{S=await Store.stats(m)}catch(err){body.innerHTML=`<div class="card err">${esc(err.message)}</div>`;return}
+  const all=S.all, me=S.nurses[n];
+  if(!all.visits){body.innerHTML='<div class="card hint">這個月份全所還沒有紀錄</div>';return}
+  if(!me){body.innerHTML=`<div class="card hint">${esc(n)} 這個月份還沒有紀錄</div>`;return}
+  const row=(name,a,b,money)=>`<tr><td>${esc(name)}</td><td>${money?fmt(a):a}</td><td>${money?fmt(b):b}</td><td>${pbar(b?a/b:0)}</td></tr>`;
+  const tbl=(title,rows,unit)=>rows.length?`<div class="card scroll"><h2>${title}</h2><table><thead><tr><th>項目</th><th>我的${unit||''}</th><th>全所</th><th>貢獻度</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>`:'';
+  const bRows=BUCKETS.filter(k=>all.b[k.id]).map(k=>row(k.name,me.b[k.id]||0,all.b[k.id],true));
+  const cnt=(obj,keys,label)=>keys.filter(k=>all[obj][k]).map(k=>row(label(k),me[obj][k]||0,all[obj][k]));
+  body.innerHTML=`<div class="kpis">
+      <div class="kpi"><div class="l">本月服務總收入</div><div class="v">${fmt(me.total)}</div><div class="s">未扣抽成</div></div>
+      <div class="kpi"><div class="l">訪視次數</div><div class="v">${me.visits}</div><div class="s">全所 ${all.visits} 次</div></div>
+      <div class="kpi"><div class="l">收入貢獻度</div><div class="v">${pct(me.total/all.total)}</div><div class="s">占全所收入</div></div>
+      <div class="kpi"><div class="l">服務量貢獻度</div><div class="v">${pct(me.visits/all.visits)}</div><div class="s">占全所訪視次數</div></div>
+      <div class="kpi"><div class="l">緊急訪視</div><div class="v">${me.emerg}</div><div class="s">全所 ${all.emerg} 次</div></div></div>
+    <div class="card"><h2>我的收入組成</h2>${stackBar(Object.assign({nhi:0,doc:0,reg:0,self:0,supply:0,ltc:0,fare:0},me.b))}</div>
+    <div class="grid2">
+      ${tbl('各類收入與貢獻度',bRows,'金額')}
+      ${tbl('給付方式（次數）',cnt('pay',PAYS.map(p=>p.id),payName))}
+    </div>
+    <div class="grid3">
+      <div class="stackcol">${tbl('健保訪視類別（次數）',cnt('cat',['1','2','3','4'],k=>catName(Number(k))))}${tbl('在宅急症（次數）',cnt('acute',Object.keys(all.acute),k=>k))}</div>
+      <div class="stackcol">${tbl('特殊照護群組（次數）',cnt('groups',GROUPS,k=>k))}</div>
+      <div class="stackcol">${tbl('自費耗材（數量）',cnt('supplies',SUPPLIES.map(s=>s.id),k=>SUPPLIES.find(s=>s.id===k).name))}${tbl('專業C碼（次數）',cnt('ltc',LTC.map(l=>l.code),k=>{const l=LTC.find(x=>x.code===k);return l.code===l.name?l.name:l.code+' '+l.name}))}</div>
+    </div>
+    <div class="card" id="mList"><h2>我的每筆紀錄 <small>讀取中…</small></h2></div>`;
+  try{
+    const rows=(await Store.mine(m,n)).sort((a,b)=>(b.date+(b.time||'')).localeCompare(a.date+(a.time||'')));
+    let lastDate='', html='';
+    rows.forEach(r=>{const c=r.calc;
+      if(r.date!==lastDate){lastDate=r.date;
+        const dayTot=rows.filter(x=>x.date===r.date).reduce((s,x)=>s+x.calc.total,0);
+        html+=`<div class="day"><b>${r.date}</b><span>${rows.filter(x=>x.date===r.date).length} 筆・${fmt(dayTot)}</span></div>`;}
+      html+=`<div class="rec"><div class="top"><div><b>${esc(r.caseCode)}</b>
+        <div class="meta">${esc(r.time||'')}${r.leave?'–'+esc(r.leave):''}｜${payName(r.pay)}｜${catOf(r)}${c.acute?` ${esc(c.acute.dz)} 第${c.acute.day}天`:''}${c.nhiPts?`｜${c.nhiPts.toLocaleString()} 點`:''}</div></div>
+        <div style="text-align:right"><b>${fmt(c.total)}</b></div></div>
+        <div>${recTags(r).map(t=>`<span class="tag">${esc(t)}</span>`).join('')}</div></div>`});
+    $('mList').innerHTML=`<h2>我的每筆紀錄 <small>共 ${rows.length} 筆，合計 ${fmt(rows.reduce((s,x)=>s+x.calc.total,0))}</small></h2>
+      <div class="hint" style="margin:0 0 6px">為保護個案隱私，姓名只顯示部分。發現輸入錯誤請通知管理者修正。</div>${html||'<div class="hint">沒有紀錄</div>'}`;
+  }catch(err){$('mList').innerHTML=`<h2>我的每筆紀錄</h2><div class="err">${esc(err.message)}</div>`}
+}
 
 /* ================= 紀錄 ================= */
 async function renderRecords(){
@@ -596,7 +756,12 @@ async function renderDash(){
   if(dView==='nurse'){
     const names=Object.keys(A.byNurse).sort((a,b)=>sum(A.byNurse[b].nurse)-sum(A.byNurse[a].nurse));
     const max=Math.max(...names.map(n=>sum(A.byNurse[n].nurse)),1);
-    body.innerHTML=`<div class="grid2"><div class="card"><h2>護理師本月應領</h2>
+    const allTot=sum(A.b)||1, allV=A.visits||1;
+    const contrib=`<div class="card scroll"><h2>護理師貢獻度 <small>整體收入（未扣抽成）</small></h2><table><thead><tr><th>護理師</th><th>次數</th><th>服務量占比</th><th>總收入</th><th>收入占比</th></tr></thead><tbody>
+      ${names.slice().sort((a,b)=>sum(A.byNurse[b].b)-sum(A.byNurse[a].b)).map(n=>{const N=A.byNurse[n],g=sum(N.b);
+        return `<tr><td>${esc(n)}</td><td>${N.visits}</td><td>${pbar(N.visits/allV)}</td><td>${fmt(g)}</td><td>${pbar(g/allTot)}</td></tr>`}).join('')}
+      </tbody><tfoot><tr><td>合計</td><td>${A.visits}</td><td>100%</td><td>${fmt(sum(A.b))}</td><td>100%</td></tr></tfoot></table></div>`;
+    body.innerHTML=contrib+`<div class="grid2"><div class="card"><h2>護理師本月應領</h2>
       ${names.map(n=>{const v=sum(A.byNurse[n].nurse);return `<div class="hbar"><span class="n">${esc(n)}</span><span class="t"><i style="width:${v/max*100}%"></i></span><span class="v">${fmt(v)}</span></div>`}).join('')}</div>
     <div class="card scroll"><h2>明細（護理師分得）</h2><table><thead><tr><th>護理師</th><th>次數</th>${BUCKETS.filter(k=>k.id!=='supply'&&k.id!=='doc').map(k=>`<th>${k.name}</th>`).join('')}<th>應領</th><th>居護所</th></tr></thead><tbody>
       ${names.map(n=>{const N=A.byNurse[n];return `<tr><td>${esc(n)}</td><td>${N.visits}</td>${BUCKETS.filter(k=>k.id!=='supply'&&k.id!=='doc').map(k=>`<td>${fmt(N.nurse[k.id])}</td>`).join('')}<td><b>${fmt(sum(N.nurse))}</b></td><td>${fmt(sum(N.agency))}</td></tr>`}).join('')}
@@ -630,7 +795,7 @@ $('dMonth').onchange=renderDash;
 
 $('xBtn').onclick=async()=>{
   try{const rows=await Store.list($('dMonth').value);
-    const head=['日期','到達','離開','護理師','個案','給付','地點','時段別','緊急訪視','類別','健保點數','健保金額','掛號費','醫師訪視','自費服務','耗材','C碼','C碼部分負擔','車資','總額','護理師分得','居護所分得','現場應收','特殊照護','備註'];
+    const head=['日期','到達','離開','護理師','個案姓名','給付','地點','時段別','緊急訪視','類別','健保點數','健保金額','掛號費','醫師訪視','自費服務','耗材','C碼','C碼部分負擔','車資','總額','護理師分得','居護所分得','現場應收','特殊照護','備註'];
     const lines=[head,...rows.map(r=>{const c=r.calc;return [r.date,r.time||'',r.leave||'',r.nurse,r.caseCode,payName(r.pay),c.place==='inst'?'機構':'在宅',TIERS[c.tier]||slotName(r.slot),r.emerg?'是':'',catOf(r)+(c.acute?` ${c.acute.dz} 第${c.acute.day}天`:''),c.nhiPts,c.b.nhi,c.b.reg||0,c.b.doc||0,c.b.self,c.b.supply,c.b.ltc,c.ltcCopay||0,c.b.fare,c.total,c.nurseTotal,c.agencyTotal,c.onsite,r.groups.join('、'),r.note]})]
       .map(a=>a.map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(','));
     $('xOut').value=lines.join('\n'); $('xOut').classList.remove('hide'); $('xCopy').classList.remove('hide');
@@ -653,17 +818,22 @@ $('adminBtn').onclick=()=>askAdmin('dash');
 function adminFail(err,tab){ if(/管理者密碼/.test(err.message)){ setAdmin(''); showTab('entry'); askAdmin(tab,'密碼錯誤，請再輸入一次'); return true } return false }
 document.querySelector('nav').onclick=e=>{const t=e.target.dataset.tab;if(!t)return; showTab(t)};
 function showTab(t){
-  if(t!=='entry' && !ADMIN){ askAdmin(t); return; }
+  if(t!=='entry' && t!=='mine' && !ADMIN){ askAdmin(t); return; }
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.tab===t));
   document.querySelectorAll('main>section').forEach(s=>s.classList.toggle('hide',s.id!=='tab-'+t));
   $('entryBar').classList.toggle('hide',t!=='entry');
-  if(t==='records')renderRecords(); if(t==='dash')renderDash();
+  if(t==='records')renderRecords(); if(t==='dash')renderDash(); if(t==='mine')renderMine();
   window.scrollTo(0,0);}
 $('rNurse').innerHTML='<option value="">全部</option>'+CONFIG.NURSES.map(n=>`<option>${esc(n)}</option>`).join('');
-['rMonth','dMonth'].forEach(id=>$(id).value=today().slice(0,7));
+['rMonth','dMonth','mMonth'].forEach(id=>$(id).value=today().slice(0,7));
+$('mNurse').innerHTML=CONFIG.NURSES.map(n=>`<option>${esc(n)}</option>`).join('');
+$('mNurse').value=lsGet('ax_nurse',CONFIG.NURSES[0]);
+$('mNurse').onchange=()=>{lsSet('ax_nurse',$('mNurse').value);renderMine()};
+$('mMonth').onchange=renderMine;
 if(!CONFIG.NURSES.includes(lsGet('ax_nurse',''))) lsSet('ax_nurse',CONFIG.NURSES[0]);
 setAdmin(ADMIN);
 resetForm();
+renderSent();
 checkConnection();
 </script>
 </body>
