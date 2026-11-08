@@ -268,6 +268,13 @@ textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
   </div>
 </div>
 <div class="toast" id="toast"></div>
+<!-- 連線設定放在 config.js（與 index.html 同一個資料夾），更新 index.html 時不用再改 -->
+<script src="config.js"></script>
+<script>
+// 程式出錯時直接在畫面上顯示原因，不會只剩空白表單
+window.addEventListener('error',e=>{const b=document.getElementById('banner');
+  if(b){b.textContent='⚠ 程式錯誤：'+(e.message||'')+(e.filename?'（'+e.filename.split('/').pop()+' 第 '+e.lineno+' 行）':'');b.classList.remove('hide')}});
+</script>
 <div class="modal hide" id="okModal">
   <div class="card" style="width:min(340px,90vw);text-align:center">
     <div style="font-size:44px;line-height:1;color:#2e8b57">✔</div>
@@ -298,8 +305,9 @@ textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
    設定（全部寫在這裡，護理師不用設定任何東西）
    ===================================================================== */
 const CONFIG = {
-  API_URL:   'https://script.google.com/macros/s/AKfycbxwzvTt4fqaibAQz27TQwLO-iYYRMuGs8PTPtHv9XKODZnnfkl8p_KTxo1-DooV4wgkyQ/exec',
-  API_TOKEN: '1234',
+  // 網址與通行碼改由 config.js 提供
+  API_URL:   (window.AIXIN_CONFIG||{}).API_URL || '',
+  API_TOKEN: (window.AIXIN_CONFIG||{}).API_TOKEN || '',
   NURSES:    ['余易旂','高渝婷','丁怡文','楊珍宜'],
   RATE:      0.95,     // 健保點數 → 健保署支付金額（免部分負擔者以 1.0 計）
   SHARE:     60,       // 平日 08–20 護理師分得 %（車資一律 100% 歸護理師）
@@ -451,9 +459,12 @@ async function post(body){
 }
 function banner(t){const b=$('banner'); b.textContent=t||''; b.classList.toggle('hide',!t)}
 async function checkConnection(){
+  if(!CONFIG.API_URL || !CONFIG.API_TOKEN || /在這裡填入/.test(CONFIG.API_TOKEN)){
+    ONLINE=false; banner('⚠ 找不到 config.js 或尚未填入 TOKEN：目前為示範模式，紀錄只存在這台裝置'); return;
+  }
   try{ const j=await post({action:'nurses'}); banner(''); if(j.nurses&&j.nurses.length) applyNurses(j.nurses); }
   catch(err){
-    if(/通行碼/.test(err.message)){ banner('⚠ 雲端通行碼不符，請管理者檢查 index.html 的 API_TOKEN'); return; }
+    if(/通行碼/.test(err.message)){ banner('⚠ 雲端通行碼不符，請管理者檢查 config.js 的 API_TOKEN'); return; }
     ONLINE=false; banner('⚠ 目前連不上雲端試算表：示範模式，紀錄只存在這台裝置，不會上傳');
   }
 }
