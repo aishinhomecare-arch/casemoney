@@ -82,6 +82,11 @@ textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
 .pb .t{width:70px;height:8px;background:#f1eef0;border-radius:4px;overflow:hidden;flex:none}
 .pb .t i{display:block;height:100%;background:var(--pink)}
 .kpi .s{font-size:12px;color:var(--muted)}
+.quota{border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px}
+.quota .qt{height:10px;background:#eef0f3;border-radius:5px;overflow:hidden;margin:6px 0 2px}
+.quota .qt i{display:block;height:100%}
+.quota.ok .qt i{background:#3a9a6a}.quota.warn .qt i{background:#d98a2b}.quota.over .qt i{background:#b42318}
+.quota.warn{background:#fff8ec}.quota.over{background:#fdeeee}
 .day{display:flex;justify-content:space-between;background:#f6f2f4;border-radius:8px;padding:6px 10px;margin-top:10px;font-size:13px}
 .grid2,.grid3{display:block}
 
@@ -133,6 +138,7 @@ textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
           <div><label class="f">護理師</label><select id="fNurse"></select></div>
           <div><label class="f">個案姓名</label><input id="fCase" placeholder="例：王小明" autocomplete="off"></div>
         </div>
+        <div id="fQuota" style="margin-top:8px"></div>
         <div class="row">
           <div><label class="f">訪視日期</label><input type="date" id="fDate"></div>
           <div><label class="f">到達時間</label><input type="time" id="fTime"></div>
@@ -311,6 +317,7 @@ const CONFIG = {
   NURSES:    ['余易旂','高渝婷','丁怡文','楊珍宜'],
   RATE:      0.95,     // 健保點數 → 健保署支付金額（免部分負擔者以 1.0 計）
   SHARE:     60,       // 平日 08–20 護理師分得 %（車資一律 100% 歸護理師）
+  NHI_LIMIT: 100,      // 一般健保：每位護理人員每月 100 人次為合理量（支付標準第五部）
   COPAY:     0.05,     // 居家照護部分負擔 5%，無條件進位（與愛馨價目表一致）
   // 各給付方式護理訪視點數（第一～四類）
   PTS: {
@@ -620,7 +627,7 @@ $('fCustom').addEventListener('input',e=>{const i=e.target.dataset.i;if(i===unde
 $('fCustom').addEventListener('click',e=>{const i=e.target.dataset.rm;if(i!==undefined){F.custom.splice(i,1);renderForm()}});
 $('addCustom').onclick=()=>{F.custom.push({name:'',amount:''});renderForm()};
 $('fLtc').addEventListener('change',e=>{const c=e.target.dataset.code;if(c){F.ltc[c]=e.target.value;renderForm()}});
-$('fDate').onchange=e=>{F.date=e.target.value;F.holiday=isWeekend(F.date);$('fHoliday').checked=F.holiday;renderForm()};
+$('fDate').onchange=e=>{const m0=F.date.slice(0,7);F.date=e.target.value;F.holiday=isWeekend(F.date);$('fHoliday').checked=F.holiday;renderForm();if(F.date.slice(0,7)!==m0)refreshQuota()};
 // 離開時間預設＝到達時間＋1 小時；護理師手動改過離開時間後就不再自動帶入
 const plusHour=t=>{if(!t)return '';const m=(toMin(t)+60)%1440;return `${pad(Math.floor(m/60))}:${pad(m%60)}`};
 $('fTime').onchange=e=>{F.time=e.target.value; if(!F.leaveTouched){F.leave=plusHour(F.time);$('fLeave').value=F.leave} renderForm()};
@@ -633,7 +640,7 @@ $('fChild').onchange=e=>{F.child=e.target.value;renderForm()};
 $('fDay').oninput=e=>{F.day=e.target.value;renderForm()};
 $('fSameDay').onchange=e=>{F.sameDay=e.target.checked;renderForm()};
 $('fDisaster').onchange=e=>{F.disaster=e.target.checked;renderForm()};
-$('fNurse').onchange=e=>{F.nurse=e.target.value;lsSet('ax_nurse',F.nurse);renderSent()};
+$('fNurse').onchange=e=>{F.nurse=e.target.value;lsSet('ax_nurse',F.nurse);renderSent();renderQuota()};
 $('fCase').oninput=e=>{F.caseCode=e.target.value; pendingId=null};
 $('fFare').oninput=e=>{F.fare=e.target.value;liveSum()};
 $('fNote').oninput=e=>F.note=e.target.value;
@@ -671,7 +678,7 @@ async function submitRecord(force){
     const res=await Store.add(rec,force);
     if(res&&res.dup){ showDup(rec,res.existing||[]); }
     else{
-      pendingId=null; addSent(rec); showOk(rec);
+      pendingId=null; addSent(rec); showOk(rec); refreshQuota();
       resetForm({date:F.date,nurse:F.nurse,pay:F.pay,place:F.place,dz:F.dz});
     }
   }catch(err){ toast('儲存失敗，請再按一次送出：'+err.message) }   // 重送會用同一個 id，不會變兩筆
@@ -695,6 +702,26 @@ function renderSent(){
   $('sentCard').classList.toggle('hide',!L.length);
   $('sentList').innerHTML=L.slice().reverse().map(x=>`<span class="tag">${esc(x.time)} ${esc(x.name)} ${fmt(x.total)}</span>`).join('');
   $('sentCount').textContent=L.length;
+}
+
+/* ================= 一般健保人次（每月上限） ================= */
+const nhiCount=A=>(A&&A.pay&&A.pay.nhi)||0;
+function quotaHtml(n,extra){
+  const L=CONFIG.NHI_LIMIT, cls=n>=L?'over':n>=L*0.8?'warn':'ok';
+  const msg=n>L?`已超過 ${n-L} 人次：超出合理量部分點數會降低`:n===L?'已達上限，下一筆起為超出合理量':`還可 ${L-n} 人次`;
+  return `<div class="quota ${cls}"><div style="display:flex;justify-content:space-between;gap:8px"><b>本月一般健保 ${n} / ${L} 人次</b><span>${msg}</span></div>
+    <div class="qt"><i style="width:${Math.min(100,n/L*100)}%"></i></div>${extra?`<div class="pr">${extra}</div>`:''}</div>`;
+}
+// 填寫頁：顯示目前選定護理師本月的一般健保人次
+let QUOTA_STATS=null;
+async function refreshQuota(){
+  try{ QUOTA_STATS=await Store.stats(F.date.slice(0,7)); }catch(e){ QUOTA_STATS=null; }
+  renderQuota();
+}
+function renderQuota(){
+  const el=$('fQuota'); if(!el) return;
+  if(!QUOTA_STATS){ el.innerHTML=''; return; }
+  el.innerHTML=quotaHtml(nhiCount(QUOTA_STATS.nurses[F.nurse]));
 }
 
 /* ================= 我的業績（公開） ================= */
@@ -743,7 +770,9 @@ async function renderMine(){
   const tbl=(title,rows,unit)=>rows.length?`<div class="card scroll"><h2>${title}</h2><table><thead><tr><th>項目</th><th>我的${unit||''}</th><th>全所</th><th>貢獻度</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>`:'';
   const bRows=BUCKETS.filter(k=>all.b[k.id]).map(k=>row(k.name,me.b[k.id]||0,all.b[k.id],true));
   const cnt=(obj,keys,label)=>keys.filter(k=>all[obj][k]).map(k=>row(label(k),me[obj][k]||0,all[obj][k]));
-  body.innerHTML=`<div class="kpis">
+  const nhiMe=nhiCount(me), nhiAll=(me.pay.nhi||0)+(me.pay.home||0)+(me.pay.acute||0);
+  body.innerHTML=`<div class="card">${quotaHtml(nhiMe,`健保案件合計 ${nhiAll} 人次（一般健保 ${nhiMe}、居家醫療 ${me.pay.home||0}、在宅急症 ${me.pay.acute||0}）；上限 100 人次依支付標準第五部，計一般健保`)}</div>
+    <div class="kpis">
       <div class="kpi"><div class="l">本月服務總收入</div><div class="v">${fmt(me.total)}</div><div class="s">未扣抽成</div></div>
       <div class="kpi"><div class="l">訪視次數</div><div class="v">${me.visits}</div><div class="s">全所 ${all.visits} 次</div></div>
       <div class="kpi"><div class="l">收入貢獻度</div><div class="v">${pct(me.total/all.total)}</div><div class="s">占全所收入</div></div>
@@ -867,7 +896,11 @@ async function renderDash(){
       ${names.slice().sort((a,b)=>sum(A.byNurse[b].b)-sum(A.byNurse[a].b)).map(n=>{const N=A.byNurse[n],g=sum(N.b);
         return `<tr><td>${esc(n)}</td><td>${N.visits}</td><td>${pbar(N.visits/allV)}</td><td>${fmt(g)}</td><td>${pbar(g/allTot)}</td></tr>`}).join('')}
       </tbody><tfoot><tr><td>合計</td><td>${A.visits}</td><td>100%</td><td>${fmt(sum(A.b))}</td><td>100%</td></tr></tfoot></table></div>`;
-    body.innerHTML=contrib+`<div class="grid2"><div class="card"><h2>護理師本月應領</h2>
+    const nhiBy={},hBy={};
+    rows.forEach(r=>{ if(r.pay==='nhi') nhiBy[r.nurse]=(nhiBy[r.nurse]||0)+1; if(['nhi','home','acute'].includes(r.pay)) hBy[r.nurse]=(hBy[r.nurse]||0)+1; });
+    const quota=`<div class="card"><h2>一般健保人次 <small>每位護理師每月上限 ${CONFIG.NHI_LIMIT} 人次</small></h2>
+      ${names.slice().sort((a,b)=>(nhiBy[b]||0)-(nhiBy[a]||0)).map(n=>`<div style="margin-top:8px"><div style="font-size:13px;margin-bottom:2px"><b>${esc(n)}</b>　<span class="pr">健保合計 ${hBy[n]||0} 人次</span></div>${quotaHtml(nhiBy[n]||0)}</div>`).join('')}</div>`;
+    body.innerHTML=quota+contrib+`<div class="grid2"><div class="card"><h2>護理師本月應領</h2>
       ${names.map(n=>{const v=sum(A.byNurse[n].nurse);return `<div class="hbar"><span class="n">${esc(n)}</span><span class="t"><i style="width:${v/max*100}%"></i></span><span class="v">${fmt(v)}</span></div>`}).join('')}</div>
     <div class="card scroll"><h2>明細（護理師分得）</h2><table><thead><tr><th>護理師</th><th>次數</th>${BUCKETS.filter(k=>k.id!=='supply'&&k.id!=='doc').map(k=>`<th>${k.name}</th>`).join('')}<th>應領</th><th>居護所</th></tr></thead><tbody>
       ${names.map(n=>{const N=A.byNurse[n];return `<tr><td>${esc(n)}</td><td>${N.visits}</td>${BUCKETS.filter(k=>k.id!=='supply'&&k.id!=='doc').map(k=>`<td>${fmt(N.nurse[k.id])}</td>`).join('')}<td><b>${fmt(sum(N.nurse))}</b></td><td>${fmt(sum(N.agency))}</td></tr>`}).join('')}
@@ -939,7 +972,7 @@ if(!activeNurses().includes(lsGet('ax_nurse',''))) lsSet('ax_nurse',activeNurses
 setAdmin(ADMIN);
 resetForm();
 renderSent();
-checkConnection();
+checkConnection().then(refreshQuota);
 </script>
 </body>
 </html>
