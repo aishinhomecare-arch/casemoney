@@ -155,7 +155,7 @@ textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
           <div id="catWrap">
             <label class="f">本次執行的特殊照護群組（自動判定類別）</label>
             <div class="seg" id="fGroups"></div>
-            <div class="row" style="margin-top:4px">
+            <div class="row" style="margin-top:4px" id="childWrap">
               <div><label class="f">兒童加成</label>
                 <select id="fChild"><option value="">無</option><option value="a">未滿 6 個月（+60%）</option><option value="b">6 個月～未滿 2 歲（+30%）</option><option value="c">2 歲～未滿 7 歲（+20%）</option></select></div>
             </div>
@@ -169,7 +169,7 @@ textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
             <label class="chk"><input type="checkbox" id="fSameDay"> 今天已申報過每日護理費（本次只計緊急訪視）</label>
             <label class="chk"><input type="checkbox" id="fDisaster"> 天然災害停止上班期間（每日護理費 +50%）</label>
           </div>
-          <label class="chk"><input type="checkbox" id="fExempt"> 免部分負擔（重大傷病、福保、榮民、百歲以上等）</label>
+          <label class="chk" id="exemptWrap"><input type="checkbox" id="fExempt"> 免部分負擔（重大傷病、福保、榮民、百歲以上等）</label>
           <label class="chk" id="docWrap"><input type="checkbox" id="fDoc"> 醫師同行訪視（另計醫師訪視費）</label>
         </div>
         <div id="selfWrap" class="hide">
@@ -299,7 +299,7 @@ textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
    ===================================================================== */
 const CONFIG = {
   API_URL:   'https://script.google.com/macros/s/AKfycbxwzvTt4fqaibAQz27TQwLO-iYYRMuGs8PTPtHv9XKODZnnfkl8p_KTxo1-DooV4wgkyQ/exec',
-  API_TOKEN: '1234',
+  API_TOKEN: '1234,
   NURSES:    ['余易旂','高渝婷','丁怡文','楊珍宜'],
   RATE:      0.95,     // 健保點數 → 健保署支付金額（免部分負擔者以 1.0 計）
   SHARE:     60,       // 平日 08–20 護理師分得 %（車資一律 100% 歸護理師）
@@ -320,6 +320,14 @@ const CONFIG = {
           sti:{name:'軟組織感染',target:7,limit:9}, oth:{name:'其他感染症（提早出院）',target:30,limit:30} }
   },
   DOC_PTS:   {home:1631, inst:1304},          // 醫師訪視費 05307C／05358C
+  // 全自費訪視：依愛馨價目表「自費」金額，第一～四類 × 時段
+  SELF_PRICE: {
+    wd: [1103, 1528, 1843, 2158],   // 平日白天 08–17
+    hd: [1544, 2139, 2580, 3021],   // 假日白天 08–17
+    ev: [1655, 2292, 2765, 3237],   // 每日夜間 17–22
+    nt: [1875, 2598, 3133, 3669]    // 每日深夜 22–08
+  },
+  SELF_DOC: 2200,                   // 醫師訪視自費
   // 緊急訪視加成（通則十）：假日 40%、夜間 50%、深夜 70%；假日＋夜間取 50%、假日＋深夜取 70%
   EMERG:     {wd:0, hd:0.4, ev:0.5, nt:0.7},
   CHILD:     {'':0, a:0.6, b:0.3, c:0.2},     // 兒童加成（通則十二）
@@ -330,7 +338,9 @@ const CONFIG = {
 /* ================= 價目 ================= */
 const PAYS=[{id:'home',name:'居家醫療'},{id:'acute',name:'在宅急症'},{id:'nhi',name:'一般健保'},{id:'c',name:'專業C碼'},{id:'self',name:'全自費'}];
 const TIERS={wd:'平日白天',hd:'假日白天',ev:'夜間 17–22',nt:'深夜 22–08'};
-const GROUPS=['氣切護理','留置導尿管','留置鼻胃管','膀胱灌洗','3、4期壓瘡傷口','大量點滴注射','造口護理'];
+const BASIC='抽血/護理衛教';   // 第一類（1103 點）項目，不計入特殊照護群組數
+const GROUPS=[BASIC,'氣切護理','留置導尿管','留置鼻胃管','膀胱灌洗','3、4期壓瘡傷口','大量點滴注射','造口護理'];
+const nGroups=g=>(g||[]).filter(x=>x!==BASIC).length;
 const SUPPLIES=[
   {id:'ng1',name:'一般鼻胃管耗材組',price:250},
   {id:'ng2',name:'兩截式鼻胃管耗材組',price:450},
@@ -468,7 +478,7 @@ function timeInfo(f){
 function calc(f){
   const isC=f.pay==='c', isSelf=f.pay==='self';
   const {slot,tier}=timeInfo(f);
-  const cat=isC?0:Math.min(4,f.groups.length+1);
+  const cat=isC?0:Math.min(4,nGroups(f.groups)+1);
   const place=(f.pay==='nhi'||f.pay==='acute')?(f.place||'home'):'home';
   const b={nhi:0,doc:0,reg:0,self:0,supply:0,ltc:0,fare:0};
   let nhiPts=0, docPts=0, docCopay=0, ltcSelf=0, ltcCopay=0, addPct=0, acute=null;
@@ -487,7 +497,8 @@ function calc(f){
     b.nhi=Math.round(nursePts*rate)+emerPts;            // 緊急訪視費不收部分負擔
     acute={dz:dz.name,day,nursePts,emerPts,emOk,over:day>dz.limit,beyond:day>dz.target};
   } else if(isSelf){
-    for(const s of SELFPAY) b.self+=(f.selfItems?.[s.id]||0)*s.price;
+    b.self=CONFIG.SELF_PRICE[tier][cat-1];          // 依類別與時段（不論是否緊急）
+    if(f.doc) b.doc=CONFIG.SELF_DOC;
   } else if(!isC){
     const tbl=f.pay==='nhi'&&place==='inst'?CONFIG.PTS.nhi_inst:CONFIG.PTS[f.pay];
     addPct=(f.emerg?CONFIG.EMERG[tier]:0)+(CONFIG.CHILD[f.child||'']||0);
@@ -552,10 +563,12 @@ function renderForm(){
   seg($('fHouse'),HOUSES,F.house,v=>{F.house=v;renderForm()});
   $('placeWrap').classList.toggle('hide',!(F.pay==='nhi'||F.pay==='acute'));
   $('catWrap').classList.toggle('hide',F.pay==='acute');
+  $('childWrap').classList.toggle('hide',F.pay==='self');
+  $('exemptWrap').classList.toggle('hide',F.pay==='self');
   $('acuteWrap').classList.toggle('hide',F.pay!=='acute');
   seg($('fDz'),Object.entries(CONFIG.ACUTE.dz).map(([id,d])=>({id,name:d.name})),F.dz,v=>{F.dz=v;renderForm()});
-  $('docWrap').classList.toggle('hide',F.pay!=='nhi');
-  if(F.pay!=='nhi'){ F.doc=false; $('fDoc').checked=false; }
+  $('docWrap').classList.toggle('hide',!(F.pay==='nhi'||F.pay==='self'));
+  if(!(F.pay==='nhi'||F.pay==='self')){ F.doc=false; $('fDoc').checked=false; }
   seg($('fGroups'),GROUPS.map(g=>({id:g,name:g})),F.groups,v=>{
     F.groups=F.groups.includes(v)?F.groups.filter(x=>x!==v):[...F.groups,v];renderForm()},true);
   stepper(SUPPLIES,F.supplies,$('fSupplies'));
@@ -567,10 +580,9 @@ function renderForm(){
   $('fLtc').innerHTML=LTC.map(l=>`<div class="item"><div class="nm">${l.code===l.name?'':esc(l.code)+' '}${esc(l.name)}<div class="pr">${l.pay?`給支付 ${fmt(l.pay)}／`:''}自費 ${fmt(l.self)}</div></div>
     <select data-code="${esc(l.code)}"><option value="">—</option>${l.pay?`<option value="pay" ${F.ltc[l.code]==='pay'?'selected':''}>給支付</option>`:''}<option value="self" ${F.ltc[l.code]==='self'?'selected':''}>${l.pay?'全自費':'自費'}</option></select></div>`).join('');
   const isC=F.pay==='c', isSelf=F.pay==='self';
-  $('groupsWrap').classList.toggle('hide',isC||isSelf);
+  $('groupsWrap').classList.toggle('hide',isC);
   $('ltcWrap').classList.toggle('hide',!isC);
-  $('selfWrap').classList.toggle('hide',!isSelf);
-  stepper(SELFPAY,F.selfItems,$('fSelfItems'));
+  $('selfWrap').classList.add('hide');
   const r=calc(F);
   const emTxt=F.pay==='acute'
     ? (F.emerg?(r.acute.emOk?'護理人員緊急訪視費 2,632 點':'緊急訪視限 18:00–08:00 抵達，本次不計'):'非緊急訪視')
@@ -579,7 +591,7 @@ function renderForm(){
   $('supplyWarn').classList.toggle('hide',isC||isSelf||!SUPPLIES.some(s=>F.supplies[s.id]));
   const a=r.acute;
   $('fCat').innerHTML=isSelf
-    ? `全自費・服務項目 ${fmt(SELFPAY.reduce((t,s)=>t+(F.selfItems[s.id]||0)*s.price,0))}`
+    ? `全自費・${catName(r.cat)}・${TIERS[r.tier]} ${fmt(r.b.self)}${F.doc?`<br>醫師訪視（自費）${fmt(r.b.doc)}`:''}`
     : F.pay==='acute'
     ? `在宅急症・${a.dz} 第 ${a.day} 天${a.over?'<br><span class="err">已超過上限天數，健保不予支付</span>':''}
        ${a.nursePts?`<br>每日護理費 ${a.nursePts.toLocaleString()} 點${a.beyond?'（目標天數外）':''}${r.addPct?`（含加成 ${Math.round(r.addPct*100)}%）`:''}`:''}
@@ -624,7 +636,8 @@ function buildRec(){
   rec.caseCode=rec.caseCode.trim();
   rec.custom=rec.custom.filter(c=>c.name||c.amount);
   delete rec.leaveTouched;
-  if(rec.pay==='c'||rec.pay==='self'){ rec.groups=[]; rec.doc=false; rec.exempt=false; rec.child=''; }
+  if(rec.pay==='c'){ rec.groups=[]; rec.doc=false; rec.exempt=false; rec.child=''; }
+  if(rec.pay==='self'){ rec.exempt=false; rec.child=''; }
   if(rec.pay!=='c') rec.ltc={};
   if(rec.pay!=='self') rec.selfItems={};
   if(rec.pay!=='nhi'&&rec.pay!=='acute') rec.place='home';
@@ -639,7 +652,7 @@ async function submitRecord(force){
   if(!F.caseCode.trim()) return toast('請填個案姓名');
   if(!F.time) return toast('請填到達時間');
   if(F.pay==='c' && !Object.values(F.ltc).some(Boolean)) return toast('請選擇 C 碼項目');
-  if(F.pay==='self' && calc(F).total<=0) return toast('請選擇全自費項目或輸入金額');
+
   const btn=$('submitBtn'); if(btn.disabled) return;
   btn.disabled=true; btn.textContent='儲存中…';
   const rec=buildRec();
@@ -697,7 +710,7 @@ function aggStats(rows){
       A.visits++; A.total+=c.total||0;
       Object.keys(A.b).forEach(k=>A.b[k]+=(c.b&&c.b[k])||0);
       A.pay[r.pay]=(A.pay[r.pay]||0)+1;
-      if(r.pay!=='c'&&r.pay!=='acute') A.cat[c.cat]=(A.cat[c.cat]||0)+1;
+      if(r.pay==='nhi'||r.pay==='home') A.cat[c.cat]=(A.cat[c.cat]||0)+1;
       (r.groups||[]).forEach(g=>A.groups[g]=(A.groups[g]||0)+1);
       Object.keys(r.supplies||{}).forEach(k=>{if(r.supplies[k]) A.supplies[k]=(A.supplies[k]||0)+r.supplies[k]});
       Object.keys(r.ltc||{}).forEach(k=>{if(r.ltc[k]) A.ltc[k]=(A.ltc[k]||0)+1});
@@ -851,7 +864,7 @@ async function renderDash(){
   }
   if(dView==='items'){
     const cats=[0,0,0,0,0],grp={},sup={},ltc={},pay={},tier={},sp={};
-    for(const r of rows){cats[r.calc.cat]++; pay[r.pay]=(pay[r.pay]||0)+1;
+    for(const r of rows){if(r.pay==='nhi'||r.pay==='home') cats[r.calc.cat]++; pay[r.pay]=(pay[r.pay]||0)+1;
       Object.entries(r.selfItems||{}).forEach(([k,v])=>{if(v)sp[k]=(sp[k]||0)+v});
       const t=r.calc.tier||''; tier[t]=(tier[t]||0)+1;
       r.groups.forEach(g=>grp[g]=(grp[g]||0)+1);
