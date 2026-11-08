@@ -15,8 +15,9 @@ body{margin:0;font-family:-apple-system,"PingFang TC","Noto Sans TC","Microsoft 
 header{background:var(--navy);color:#fff;position:sticky;top:0;z-index:10}
 .hin{max-width:1180px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
 header h1{margin:0;font-size:17px;font-weight:600;flex:1;min-width:220px}
-nav{display:flex;gap:4px}
-nav button{border:0;background:none;padding:8px 14px;font-size:14px;color:#cfd7e6;border-radius:8px;font-family:inherit;cursor:pointer}
+nav{display:flex;gap:4px;max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+nav::-webkit-scrollbar{display:none}
+nav button{white-space:nowrap;flex:none;border:0;background:none;padding:8px 12px;font-size:14px;color:#cfd7e6;border-radius:8px;font-family:inherit;cursor:pointer}
 nav button.on{background:#fff;color:var(--navy);font-weight:600}
 .banner{background:#fff4d6;color:#7a5200;font-size:13px;padding:8px 16px;text-align:center}
 main{max-width:1180px;margin:0 auto;padding:14px 14px 130px}
@@ -110,6 +111,7 @@ textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
       <button data-tab="mine">我的業績</button>
       <button data-tab="records" class="adm hide">紀錄</button>
       <button data-tab="dash" class="adm hide">儀表板</button>
+      <button data-tab="staff" class="adm hide">護理師</button>
       <button id="adminBtn" title="管理者登入">管理者</button>
       <button id="lockBtn" class="hide" title="鎖定紀錄與儀表板">🔒 鎖定</button>
     </nav>
@@ -170,6 +172,10 @@ textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
           <label class="chk"><input type="checkbox" id="fExempt"> 免部分負擔（重大傷病、福保、榮民、百歲以上等）</label>
           <label class="chk" id="docWrap"><input type="checkbox" id="fDoc"> 醫師同行訪視（另計醫師訪視費）</label>
         </div>
+        <div id="selfWrap" class="hide">
+          <label class="f">全自費服務項目</label>
+          <div id="fSelfItems"></div>
+        </div>
         <div id="ltcWrap" class="hide">
           <label class="f">長照身分（決定 C 碼部分負擔）</label>
           <div class="seg" id="fHouse"></div>
@@ -212,6 +218,19 @@ textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
       <div class="hint">顯示整體服務收入（未扣抽成），以及占全所的比例（貢獻度）。</div>
     </div>
     <div id="mBody"></div>
+  </section>
+
+  <section id="tab-staff" class="hide">
+    <div class="card">
+      <h2>護理師名單</h2>
+      <div class="hint" style="margin-top:0">設為「離職」後不會出現在填寫頁，但歷史紀錄與報表保留。也可以直接在試算表的「護理師名單」分頁修改。</div>
+      <div id="staffList" style="margin-top:8px"></div>
+      <div class="row" style="margin-top:10px">
+        <input id="staffNew" placeholder="新增護理師姓名">
+        <button class="btn sec" id="staffAdd" style="flex:none">＋ 新增</button>
+      </div>
+      <button class="btn pri" id="staffSave" style="width:100%;margin-top:12px">儲存名單</button>
+    </div>
   </section>
 
   <section id="tab-records" class="hide">
@@ -283,7 +302,7 @@ const CONFIG = {
   API_TOKEN: '1234',
   NURSES:    ['余易旂','高渝婷','丁怡文','楊珍宜'],
   RATE:      0.95,     // 健保點數 → 健保署支付金額（免部分負擔者以 1.0 計）
-  SHARE:     60,       // 08–20 護理師分得 %
+  SHARE:     60,       // 平日 08–20 護理師分得 %（車資一律 100% 歸護理師）
   COPAY:     0.05,     // 居家照護部分負擔 5%，無條件進位（與愛馨價目表一致）
   // 各給付方式護理訪視點數（第一～四類）
   PTS: {
@@ -309,7 +328,7 @@ const CONFIG = {
 };
 
 /* ================= 價目 ================= */
-const PAYS=[{id:'home',name:'居家醫療'},{id:'acute',name:'在宅急症'},{id:'nhi',name:'一般健保'},{id:'c',name:'專業C碼'}];
+const PAYS=[{id:'home',name:'居家醫療'},{id:'acute',name:'在宅急症'},{id:'nhi',name:'一般健保'},{id:'c',name:'專業C碼'},{id:'self',name:'全自費'}];
 const TIERS={wd:'平日白天',hd:'假日白天',ev:'夜間 17–22',nt:'深夜 22–08'};
 const GROUPS=['氣切護理','留置導尿管','留置鼻胃管','膀胱灌洗','3、4期壓瘡傷口','大量點滴注射','造口護理'];
 const SUPPLIES=[
@@ -320,6 +339,17 @@ const SUPPLIES=[
   {id:'tr',name:'氣切管耗材組（有閥／無閥）',price:700},
   {id:'wd',name:'傷口耗材',price:100}];
 const OTHER=[{id:'miss',name:'服務未遇處理費',price:240}];
+// 全自費服務（價格取自愛馨 S2 價目表「自費費用」欄）
+const SELFPAY=[
+  {id:'sNG',name:'自費換管：鼻胃管',price:1500},
+  {id:'sFL',name:'自費換管：導尿管',price:1500},
+  {id:'sTR',name:'自費換管：氣切管',price:2000},
+  {id:'sWD',name:'自費換藥：傷口換藥',price:2000},
+  {id:'sBL',name:'自費抽血／代採檢體',price:1500},
+  {id:'sBI',name:'自費膀胱灌洗',price:1500},
+  {id:'sIV',name:'自費點滴注射',price:1500},
+  {id:'sST',name:'自費造口護理',price:1500},
+  {id:'sGN',name:'一般護理評估／衛教',price:1200}];
 const LTC=[
   {code:'抽血',name:'居家抽血／代採檢體',pay:null,self:1500,bucket:'self'},
   {code:'CD02',name:'居家護理指導與諮詢',pay:1500,self:2000},
@@ -341,7 +371,7 @@ const BUCKETS=[
 const payName=id=>(PAYS.find(p=>p.id===id)||{name:id}).name;
 const slotName=id=>id==='night'?'20–08':'08–20';
 const catName=c=>c?'第'+'一二三四'[c-1]+'類':'C碼';
-const catOf=r=>r.pay==='acute'?'在宅急症':catName(r.calc.cat);
+const catOf=r=>r.pay==='acute'?'在宅急症':r.pay==='self'?'全自費':catName(r.calc.cat);
 const $=id=>document.getElementById(id);
 const sum=o=>Object.values(o).reduce((a,c)=>a+c,0);
 const fmt=n=>'$'+Math.round(n).toLocaleString('zh-TW');
@@ -356,7 +386,22 @@ function toast(t){const e=$('toast');e.textContent=t;e.style.display='block';cle
 const MEM={};
 function lsGet(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return MEM[k]??d}}
 function lsSet(k,v){MEM[k]=v;try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
-let ONLINE=true;   // 連不上雲端時改為示範模式，並顯示黃色橫幅
+let ONLINE=true;
+// 護理師名單：以試算表「護理師名單」為準，本機暫存一份；CONFIG.NURSES 只是第一次的預設值
+let NURSES_ALL=lsGet('ax_nurses',CONFIG.NURSES.map(n=>({name:n,active:true})));
+const activeNurses=()=>NURSES_ALL.filter(n=>n.active).map(n=>n.name);
+function fillNurseSelects(){
+  const act=activeNurses(), all=NURSES_ALL.map(n=>n.name);
+  $('rNurse').innerHTML='<option value="">全部</option>'+all.map(n=>`<option>${esc(n)}</option>`).join('');
+  const cur=lsGet('ax_nurse',act[0]);
+  $('mNurse').innerHTML=act.map(n=>`<option>${esc(n)}</option>`).join('');
+  if(act.includes(cur)) $('mNurse').value=cur;
+}
+function applyNurses(list){
+  NURSES_ALL=list; lsSet('ax_nurses',list); fillNurseSelects();
+  if(F && !activeNurses().includes(F.nurse)){F.nurse=activeNurses()[0]||''; lsSet('ax_nurse',F.nurse)}
+  if(F){renderForm(); renderSent();}
+}   // 連不上雲端時改為示範模式，並顯示黃色橫幅
 
 // 管理者密碼：只存在本分頁（關閉瀏覽器即失效），由 Apps Script 端驗證
 let ADMIN=(()=>{try{return sessionStorage.getItem('ax_admin')||''}catch(e){return ''}})();
@@ -396,7 +441,7 @@ async function post(body){
 }
 function banner(t){const b=$('banner'); b.textContent=t||''; b.classList.toggle('hide',!t)}
 async function checkConnection(){
-  try{ await post({action:'ping'}); banner(''); }
+  try{ const j=await post({action:'nurses'}); banner(''); if(j.nurses&&j.nurses.length) applyNurses(j.nurses); }
   catch(err){
     if(/通行碼/.test(err.message)){ banner('⚠ 雲端通行碼不符，請管理者檢查 index.html 的 API_TOKEN'); return; }
     ONLINE=false; banner('⚠ 目前連不上雲端試算表：示範模式，紀錄只存在這台裝置，不會上傳');
@@ -421,7 +466,7 @@ function timeInfo(f){
   return {slot,tier};
 }
 function calc(f){
-  const isC=f.pay==='c';
+  const isC=f.pay==='c', isSelf=f.pay==='self';
   const {slot,tier}=timeInfo(f);
   const cat=isC?0:Math.min(4,f.groups.length+1);
   const place=(f.pay==='nhi'||f.pay==='acute')?(f.place||'home'):'home';
@@ -441,6 +486,8 @@ function calc(f){
     b.reg=Math.ceil(nursePts*copay);                    // 部分負擔：每日護理費 5%
     b.nhi=Math.round(nursePts*rate)+emerPts;            // 緊急訪視費不收部分負擔
     acute={dz:dz.name,day,nursePts,emerPts,emOk,over:day>dz.limit,beyond:day>dz.target};
+  } else if(isSelf){
+    for(const s of SELFPAY) b.self+=(f.selfItems?.[s.id]||0)*s.price;
   } else if(!isC){
     const tbl=f.pay==='nhi'&&place==='inst'?CONFIG.PTS.nhi_inst:CONFIG.PTS[f.pay];
     addPct=(f.emerg?CONFIG.EMERG[tier]:0)+(CONFIG.CHILD[f.child||'']||0);
@@ -461,8 +508,10 @@ function calc(f){
   for(const c of f.custom) b.self+=Number(c.amount)||0;
   b.fare=Number(f.fare)||0;
   // 分帳：耗材、醫師訪視全歸居護所；20–08 掛號費、自費、車資全歸護理師；健保、C碼依比例
-  const night=slot==='night', S=CONFIG.SHARE;
-  const pct={nhi:S, ltc:S, doc:0, reg:night?100:S, self:night?100:S, fare:night?100:S, supply:0};
+  // 分帳：車資一律 100% 歸護理師；耗材、醫師訪視全歸居護所；
+  //       例假日或 20–08 其餘費用 100% 歸護理師；平日 08–20 依比例
+  const off=slot==='night'||!!f.holiday, S=off?100:CONFIG.SHARE;
+  const pct={nhi:S, ltc:S, reg:S, self:S, fare:100, doc:0, supply:0};
   const nurse={},agency={};
   for(const k in b){nurse[k]=Math.round(b[k]*pct[k]/100); agency[k]=b[k]-nurse[k];}
   return {cat,slot,tier,place,addPct,acute,nhiPts,docPts,docCopay,ltcCopay,b,nurse,agency,pct,
@@ -474,11 +523,12 @@ function calc(f){
 let F;
 function resetForm(keep){
   const d=keep?.date||today();
-  F={date:d,time:nowTime(),leave:'',holiday:isWeekend(d),emerg:false,nurse:keep?.nurse||lsGet('ax_nurse',CONFIG.NURSES[0]),
+  const t0=nowTime();
+  F={date:d,time:t0,leave:plusHour(t0),leaveTouched:false,holiday:isWeekend(d),emerg:false,nurse:keep?.nurse||lsGet('ax_nurse',activeNurses()[0]),
      caseCode:'',pay:keep?.pay||'nhi',place:keep?.place||'home',exempt:false,doc:false,child:'',house:'gen',
      dz:keep?.dz||'pn',day:'1',sameDay:false,disaster:false,
-     groups:[],supplies:{},other:{},custom:[],ltc:{},fare:'',note:''};
-  $('fDate').value=F.date; $('fTime').value=F.time; $('fLeave').value=''; $('fHoliday').checked=F.holiday;
+     groups:[],supplies:{},other:{},custom:[],ltc:{},selfItems:{},fare:'',note:''};
+  $('fDate').value=F.date; $('fTime').value=F.time; $('fLeave').value=F.leave; $('fHoliday').checked=F.holiday;
   $('fEmerg').checked=false; $('fExempt').checked=false; $('fDoc').checked=false; $('fChild').value='';
   $('fDay').value='1'; $('fSameDay').checked=false; $('fDisaster').checked=false;
   $('fCase').value=''; $('fFare').value=''; $('fNote').value='';
@@ -496,7 +546,7 @@ function stepper(list,store,el){
 function liveSum(){const r=calc(F);
   $('liveSum').innerHTML=`本次合計 <b>${fmt(r.total)}</b>`}
 function renderForm(){
-  $('fNurse').innerHTML=CONFIG.NURSES.map(n=>`<option ${n===F.nurse?'selected':''}>${esc(n)}</option>`).join('');
+  $('fNurse').innerHTML=activeNurses().map(n=>`<option ${n===F.nurse?'selected':''}>${esc(n)}</option>`).join('');
   seg($('fPay'),PAYS,F.pay,v=>{F.pay=v;renderForm()});
   seg($('fPlace'),PLACES,F.place,v=>{F.place=v;renderForm()});
   seg($('fHouse'),HOUSES,F.house,v=>{F.house=v;renderForm()});
@@ -516,17 +566,21 @@ function renderForm(){
     <button class="btn sec sm" data-rm="${i}" style="flex:none;min-width:0">刪</button></div>`).join('');
   $('fLtc').innerHTML=LTC.map(l=>`<div class="item"><div class="nm">${l.code===l.name?'':esc(l.code)+' '}${esc(l.name)}<div class="pr">${l.pay?`給支付 ${fmt(l.pay)}／`:''}自費 ${fmt(l.self)}</div></div>
     <select data-code="${esc(l.code)}"><option value="">—</option>${l.pay?`<option value="pay" ${F.ltc[l.code]==='pay'?'selected':''}>給支付</option>`:''}<option value="self" ${F.ltc[l.code]==='self'?'selected':''}>${l.pay?'全自費':'自費'}</option></select></div>`).join('');
-  const isC=F.pay==='c';
-  $('groupsWrap').classList.toggle('hide',isC);
+  const isC=F.pay==='c', isSelf=F.pay==='self';
+  $('groupsWrap').classList.toggle('hide',isC||isSelf);
   $('ltcWrap').classList.toggle('hide',!isC);
+  $('selfWrap').classList.toggle('hide',!isSelf);
+  stepper(SELFPAY,F.selfItems,$('fSelfItems'));
   const r=calc(F);
   const emTxt=F.pay==='acute'
     ? (F.emerg?(r.acute.emOk?'護理人員緊急訪視費 2,632 點':'緊急訪視限 18:00–08:00 抵達，本次不計'):'非緊急訪視')
     : (F.emerg?`緊急訪視加成 +${Math.round(CONFIG.EMERG[r.tier]*100)}%`:'非緊急訪視：不加成');
-  $('fTier').textContent=isC?TIERS[r.tier]:`${TIERS[r.tier]}｜${emTxt}`;
-  $('supplyWarn').classList.toggle('hide',isC||!SUPPLIES.some(s=>F.supplies[s.id]));
+  $('fTier').textContent=(isC||isSelf)?TIERS[r.tier]:`${TIERS[r.tier]}｜${emTxt}`;
+  $('supplyWarn').classList.toggle('hide',isC||isSelf||!SUPPLIES.some(s=>F.supplies[s.id]));
   const a=r.acute;
-  $('fCat').innerHTML=F.pay==='acute'
+  $('fCat').innerHTML=isSelf
+    ? `全自費・服務項目 ${fmt(SELFPAY.reduce((t,s)=>t+(F.selfItems[s.id]||0)*s.price,0))}`
+    : F.pay==='acute'
     ? `在宅急症・${a.dz} 第 ${a.day} 天${a.over?'<br><span class="err">已超過上限天數，健保不予支付</span>':''}
        ${a.nursePts?`<br>每日護理費 ${a.nursePts.toLocaleString()} 點${a.beyond?'（目標天數外）':''}${r.addPct?`（含加成 ${Math.round(r.addPct*100)}%）`:''}`:''}
        ${a.emerPts?`<br>護理人員緊急訪視 ${a.emerPts.toLocaleString()} 點`:''}
@@ -544,9 +598,11 @@ $('fCustom').addEventListener('click',e=>{const i=e.target.dataset.rm;if(i!==und
 $('addCustom').onclick=()=>{F.custom.push({name:'',amount:''});renderForm()};
 $('fLtc').addEventListener('change',e=>{const c=e.target.dataset.code;if(c){F.ltc[c]=e.target.value;renderForm()}});
 $('fDate').onchange=e=>{F.date=e.target.value;F.holiday=isWeekend(F.date);$('fHoliday').checked=F.holiday;renderForm()};
-$('fTime').onchange=e=>{F.time=e.target.value;renderForm()};
+// 離開時間預設＝到達時間＋1 小時；護理師手動改過離開時間後就不再自動帶入
+const plusHour=t=>{if(!t)return '';const m=(toMin(t)+60)%1440;return `${pad(Math.floor(m/60))}:${pad(m%60)}`};
+$('fTime').onchange=e=>{F.time=e.target.value; if(!F.leaveTouched){F.leave=plusHour(F.time);$('fLeave').value=F.leave} renderForm()};
 $('fHoliday').onchange=e=>{F.holiday=e.target.checked;renderForm()};
-$('fLeave').onchange=e=>{F.leave=e.target.value;renderForm()};
+$('fLeave').onchange=e=>{F.leave=e.target.value;F.leaveTouched=true;renderForm()};
 $('fEmerg').onchange=e=>{F.emerg=e.target.checked;renderForm()};
 $('fExempt').onchange=e=>{F.exempt=e.target.checked;renderForm()};
 $('fDoc').onchange=e=>{F.doc=e.target.checked;renderForm()};
@@ -567,7 +623,10 @@ function buildRec(){
   const rec=JSON.parse(JSON.stringify(F));
   rec.caseCode=rec.caseCode.trim();
   rec.custom=rec.custom.filter(c=>c.name||c.amount);
-  if(rec.pay==='c'){ rec.groups=[]; rec.doc=false; rec.exempt=false; rec.child=''; } else rec.ltc={};
+  delete rec.leaveTouched;
+  if(rec.pay==='c'||rec.pay==='self'){ rec.groups=[]; rec.doc=false; rec.exempt=false; rec.child=''; }
+  if(rec.pay!=='c') rec.ltc={};
+  if(rec.pay!=='self') rec.selfItems={};
   if(rec.pay!=='nhi'&&rec.pay!=='acute') rec.place='home';
   if(rec.pay!=='acute'){ delete rec.dz; delete rec.day; delete rec.sameDay; delete rec.disaster; } else { rec.groups=[]; rec.child=''; }
   rec.id=pendingId||(pendingId=Date.now().toString(36)+Math.random().toString(36).slice(2,6));
@@ -580,6 +639,7 @@ async function submitRecord(force){
   if(!F.caseCode.trim()) return toast('請填個案姓名');
   if(!F.time) return toast('請填到達時間');
   if(F.pay==='c' && !Object.values(F.ltc).some(Boolean)) return toast('請選擇 C 碼項目');
+  if(F.pay==='self' && calc(F).total<=0) return toast('請選擇全自費項目或輸入金額');
   const btn=$('submitBtn'); if(btn.disabled) return;
   btn.disabled=true; btn.textContent='儲存中…';
   const rec=buildRec();
@@ -622,13 +682,14 @@ function recTags(r){const c=r.calc||{},b=c.b||{};
   return [...(r.groups||[]),...SUPPLIES.filter(s=>(r.supplies||{})[s.id]).map(s=>s.name.replace('耗材組','')+'×'+r.supplies[s.id]),
     ...Object.entries(r.ltc||{}).filter(([,v])=>v).map(([k,v])=>k+(v==='self'?'(自費)':'')),...(r.custom||[]).map(x=>x.name).filter(Boolean),
     ...OTHER.filter(o=>(r.other||{})[o.id]).map(o=>o.name),
+    ...SELFPAY.filter(s=>(r.selfItems||{})[s.id]).map(s=>s.name+'×'+r.selfItems[s.id]),
     ...(r.emerg?['緊急訪視']:[]),...(c.place==='inst'?['機構']:[]),...(r.exempt?['免部分負擔']:[]),
     ...(b.doc?['醫師訪視']:[]),...(b.reg?['掛號 '+fmt(b.reg)]:[]),...(b.fare?['車資 '+fmt(b.fare)]:[])]}
 const pct=x=>(isFinite(x)?Math.round(x*1000)/10:0)+'%';
 const pbar=x=>`<span class="pb"><span class="t"><i style="width:${Math.min(100,(x||0)*100)}%"></i></span>${pct(x||0)}</span>`;
 // 與 Code.gs 的 stats_() 相同邏輯
 function aggStats(rows){
-  const mk=()=>({visits:0,total:0,b:{nhi:0,doc:0,reg:0,self:0,supply:0,ltc:0,fare:0},pay:{},cat:{},groups:{},supplies:{},ltc:{},emerg:0,acute:{}});
+  const mk=()=>({visits:0,total:0,b:{nhi:0,doc:0,reg:0,self:0,supply:0,ltc:0,fare:0},pay:{},cat:{},groups:{},supplies:{},ltc:{},selfItems:{},emerg:0,acute:{}});
   const all=mk(), nurses={};
   rows.forEach(r=>{
     const c=r.calc; if(!nurses[r.nurse]) nurses[r.nurse]=mk();
@@ -642,6 +703,7 @@ function aggStats(rows){
       Object.keys(r.ltc||{}).forEach(k=>{if(r.ltc[k]) A.ltc[k]=(A.ltc[k]||0)+1});
       if(r.emerg) A.emerg++;
       if(c.acute) A.acute[c.acute.dz]=(A.acute[c.acute.dz]||0)+1;
+      Object.keys(r.selfItems||{}).forEach(k=>{if(r.selfItems[k]) A.selfItems[k]=(A.selfItems[k]||0)+r.selfItems[k]});
     });
   });
   return {all,nurses};
@@ -671,7 +733,7 @@ async function renderMine(){
     <div class="grid3">
       <div class="stackcol">${tbl('健保訪視類別（次數）',cnt('cat',['1','2','3','4'],k=>catName(Number(k))))}${tbl('在宅急症（次數）',cnt('acute',Object.keys(all.acute),k=>k))}</div>
       <div class="stackcol">${tbl('特殊照護群組（次數）',cnt('groups',GROUPS,k=>k))}</div>
-      <div class="stackcol">${tbl('自費耗材（數量）',cnt('supplies',SUPPLIES.map(s=>s.id),k=>SUPPLIES.find(s=>s.id===k).name))}${tbl('專業C碼（次數）',cnt('ltc',LTC.map(l=>l.code),k=>{const l=LTC.find(x=>x.code===k);return l.code===l.name?l.name:l.code+' '+l.name}))}</div>
+      <div class="stackcol">${tbl('自費耗材（數量）',cnt('supplies',SUPPLIES.map(s=>s.id),k=>SUPPLIES.find(s=>s.id===k).name))}${tbl('專業C碼（次數）',cnt('ltc',LTC.map(l=>l.code),k=>{const l=LTC.find(x=>x.code===k);return l.code===l.name?l.name:l.code+' '+l.name}))}${tbl('全自費項目（次數）',cnt('selfItems',SELFPAY.map(s=>s.id),k=>SELFPAY.find(s=>s.id===k).name))}</div>
     </div>
     <div class="card" id="mList"><h2>我的每筆紀錄 <small>讀取中…</small></h2></div>`;
   try{
@@ -689,6 +751,26 @@ async function renderMine(){
       <div class="hint" style="margin:0 0 6px">為保護個案隱私，姓名只顯示部分。發現輸入錯誤請通知管理者修正。</div>${html||'<div class="hint">沒有紀錄</div>'}`;
   }catch(err){$('mList').innerHTML=`<h2>我的每筆紀錄</h2><div class="err">${esc(err.message)}</div>`}
 }
+
+/* ================= 護理師管理（管理者） ================= */
+let STAFF=[];
+function renderStaff(){
+  STAFF=JSON.parse(JSON.stringify(NURSES_ALL));
+  drawStaff();
+}
+function drawStaff(){
+  $('staffList').innerHTML=STAFF.map((n,i)=>`<div class="item"><div class="nm"><b>${esc(n.name)}</b></div>
+    <div class="seg" data-i="${i}"><button type="button" data-v="1" class="${n.active?'on':''}">在職</button><button type="button" data-v="0" class="${n.active?'':'on'}">離職</button></div></div>`).join('')||'<div class="hint">尚無護理師</div>';
+}
+$('staffList').onclick=e=>{const v=e.target.dataset.v, i=e.target.parentElement?.dataset.i; if(v===undefined||i===undefined)return; STAFF[i].active=v==='1'; drawStaff()};
+$('staffAdd').onclick=()=>{const n=$('staffNew').value.trim(); if(!n)return;
+  if(STAFF.some(x=>x.name===n)) return toast('名單裡已經有這位');
+  STAFF.push({name:n,active:true}); $('staffNew').value=''; drawStaff()};
+$('staffSave').onclick=async()=>{
+  if(!STAFF.some(n=>n.active)) return toast('至少要有一位在職護理師');
+  try{ if(ONLINE) await post({action:'nurses_save',admin:ADMIN,nurses:STAFF}); applyNurses(STAFF); toast('名單已儲存'+(ONLINE?'':'（僅本機）')); }
+  catch(err){ if(!adminFail(err,'staff')) toast('儲存失敗：'+err.message) }
+};
 
 /* ================= 紀錄 ================= */
 async function renderRecords(){
@@ -768,8 +850,9 @@ async function renderDash(){
       </tbody><tfoot><tr><td>合計</td><td>${A.visits}</td>${BUCKETS.filter(k=>k.id!=='supply'&&k.id!=='doc').map(k=>`<td>${fmt(A.nurse[k.id])}</td>`).join('')}<td>${fmt(sum(A.nurse))}</td><td>${fmt(sum(A.agency))}</td></tr></tfoot></table></div></div>`;
   }
   if(dView==='items'){
-    const cats=[0,0,0,0,0],grp={},sup={},ltc={},pay={},tier={};
+    const cats=[0,0,0,0,0],grp={},sup={},ltc={},pay={},tier={},sp={};
     for(const r of rows){cats[r.calc.cat]++; pay[r.pay]=(pay[r.pay]||0)+1;
+      Object.entries(r.selfItems||{}).forEach(([k,v])=>{if(v)sp[k]=(sp[k]||0)+v});
       const t=r.calc.tier||''; tier[t]=(tier[t]||0)+1;
       r.groups.forEach(g=>grp[g]=(grp[g]||0)+1);
       SUPPLIES.forEach(s=>{if(r.supplies[s.id])sup[s.id]=(sup[s.id]||0)+r.supplies[s.id]});
@@ -787,7 +870,7 @@ async function renderDash(){
     body.innerHTML=warn+`<div class="grid3">`+
       `<div class="stackcol">`+list('給付方式',PAYS.map(p=>[p.name,pay[p.id]||0]))+list('時段別',Object.keys(TIERS).map(k=>[TIERS[k],tier[k]||0]))+`</div>`+
       `<div class="stackcol">`+list('健保訪視類別',[1,2,3,4].map(i=>[catName(i),cats[i]]))+list('特殊照護群組',GROUPS.map(g=>[g,grp[g]||0]))+`</div>`+
-      `<div class="stackcol">`+list('自費耗材',SUPPLIES.map(s=>[s.name,sup[s.id]||0,fmt((sup[s.id]||0)*s.price)]))+list('專業C碼',LTC.map(l=>[l.code===l.name?l.name:l.code+' '+l.name,ltc[l.code]||0]))+`</div>`+
+      `<div class="stackcol">`+list('自費耗材',SUPPLIES.map(s=>[s.name,sup[s.id]||0,fmt((sup[s.id]||0)*s.price)]))+list('專業C碼',LTC.map(l=>[l.code===l.name?l.name:l.code+' '+l.name,ltc[l.code]||0]))+list('全自費項目',SELFPAY.map(s=>[s.name,sp[s.id]||0,fmt((sp[s.id]||0)*s.price)]))+`</div>`+
       `</div>`;
   }
 }
@@ -822,15 +905,13 @@ function showTab(t){
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.tab===t));
   document.querySelectorAll('main>section').forEach(s=>s.classList.toggle('hide',s.id!=='tab-'+t));
   $('entryBar').classList.toggle('hide',t!=='entry');
-  if(t==='records')renderRecords(); if(t==='dash')renderDash(); if(t==='mine')renderMine();
+  if(t==='records')renderRecords(); if(t==='dash')renderDash(); if(t==='mine')renderMine(); if(t==='staff')renderStaff();
   window.scrollTo(0,0);}
-$('rNurse').innerHTML='<option value="">全部</option>'+CONFIG.NURSES.map(n=>`<option>${esc(n)}</option>`).join('');
+fillNurseSelects();
 ['rMonth','dMonth','mMonth'].forEach(id=>$(id).value=today().slice(0,7));
-$('mNurse').innerHTML=CONFIG.NURSES.map(n=>`<option>${esc(n)}</option>`).join('');
-$('mNurse').value=lsGet('ax_nurse',CONFIG.NURSES[0]);
 $('mNurse').onchange=()=>{lsSet('ax_nurse',$('mNurse').value);renderMine()};
 $('mMonth').onchange=renderMine;
-if(!CONFIG.NURSES.includes(lsGet('ax_nurse',''))) lsSet('ax_nurse',CONFIG.NURSES[0]);
+if(!activeNurses().includes(lsGet('ax_nurse',''))) lsSet('ax_nurse',activeNurses()[0]);
 setAdmin(ADMIN);
 resetForm();
 renderSent();
