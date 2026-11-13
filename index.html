@@ -161,6 +161,7 @@ textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
           <div id="catWrap">
             <label class="f">本次執行的特殊照護群組（自動判定類別）</label>
             <div class="seg" id="fGroups"></div>
+            <div id="otherGWrap" class="hide" style="margin-top:6px"><input id="fOtherG" placeholder="其他服務內容（例：灌腸、更換敷料…）"></div>
             <div class="row" style="margin-top:4px" id="childWrap">
               <div><label class="f">兒童加成</label>
                 <select id="fChild"><option value="">無</option><option value="a">未滿 6 個月（+60%）</option><option value="b">6 個月～未滿 2 歲（+30%）</option><option value="c">2 歲～未滿 7 歲（+20%）</option></select></div>
@@ -353,8 +354,9 @@ const CONFIG = {
 const PAYS=[{id:'home',name:'居家醫療'},{id:'acute',name:'在宅急症'},{id:'nhi',name:'一般健保'},{id:'c',name:'專業C碼'},{id:'self',name:'全自費'}];
 const TIERS={wd:'平日白天',hd:'假日白天',ev:'夜間 17–22',nt:'深夜 22–08'};
 const BASIC='抽血/護理衛教';   // 第一類（1103 點）項目，不計入特殊照護群組數
-const GROUPS=[BASIC,'氣切護理','留置導尿管','留置鼻胃管','膀胱灌洗','3、4期壓瘡傷口','大量點滴注射','造口護理'];
-const nGroups=g=>(g||[]).filter(x=>x!==BASIC).length;
+const OTHER_G='其他';             // 只做紀錄，不影響類別與費用；費用請用「自訂自費項目」另外加
+const GROUPS=[BASIC,'氣切護理','留置導尿管','留置鼻胃管','膀胱灌洗','3、4期壓瘡傷口','大量點滴注射','造口護理',OTHER_G];
+const nGroups=g=>(g||[]).filter(x=>x!==BASIC&&x!==OTHER_G).length;
 const SUPPLIES=[
   {id:'ng1',name:'一般鼻胃管耗材組',price:250},
   {id:'ng2',name:'兩截式鼻胃管耗材組',price:450},
@@ -555,7 +557,8 @@ function resetForm(keep){
   F={date:d,time:t0,leave:plusHour(t0),leaveTouched:false,holiday:isWeekend(d),emerg:false,nurse:keep?.nurse||lsGet('ax_nurse',activeNurses()[0]),
      caseCode:'',pay:keep?.pay||'nhi',place:keep?.place||'home',exempt:false,doc:false,child:'',house:'gen',
      dz:keep?.dz||'pn',day:'1',sameDay:false,disaster:false,
-     groups:[],supplies:{},other:{},custom:[],ltc:{},selfItems:{},fare:'',note:''};
+     groups:[],otherG:'',supplies:{},other:{},custom:[],ltc:{},selfItems:{},fare:'',note:''};
+  if($('fOtherG')) $('fOtherG').value='';
   $('fDate').value=F.date; $('fTime').value=F.time; $('fLeave').value=F.leave; $('fHoliday').checked=F.holiday;
   $('fEmerg').checked=false; $('fExempt').checked=false; $('fDoc').checked=false; $('fChild').value='';
   $('fDay').value='1'; $('fSameDay').checked=false; $('fDisaster').checked=false;
@@ -581,6 +584,7 @@ function renderForm(){
   $('placeWrap').classList.toggle('hide',!(F.pay==='nhi'||F.pay==='acute'));
   $('catWrap').classList.toggle('hide',F.pay==='acute');
   $('childWrap').classList.toggle('hide',F.pay==='self');
+  $('otherGWrap').classList.toggle('hide',!F.groups.includes(OTHER_G));
   $('exemptWrap').classList.toggle('hide',F.pay==='self');
   $('acuteWrap').classList.toggle('hide',F.pay!=='acute');
   seg($('fDz'),Object.entries(CONFIG.ACUTE.dz).map(([id,d])=>({id,name:d.name})),F.dz,v=>{F.dz=v;renderForm()});
@@ -643,6 +647,7 @@ $('fNurse').onchange=e=>{F.nurse=e.target.value;lsSet('ax_nurse',F.nurse);render
 $('fCase').oninput=e=>{F.caseCode=e.target.value; pendingId=null};
 $('fFare').oninput=e=>{F.fare=e.target.value;liveSum()};
 $('fNote').oninput=e=>F.note=e.target.value;
+$('fOtherG').oninput=e=>F.otherG=e.target.value;
 
 // 防重複：①送出中鎖住按鈕 ②同一筆重送沿用同一個 id（伺服器只存一次）
 //         ③同一天同一位個案已有紀錄時先確認 ④顯示今天已送出清單
@@ -654,6 +659,7 @@ function buildRec(){
   rec.custom=rec.custom.filter(c=>c.name||c.amount);
   delete rec.leaveTouched;
   if(rec.pay==='c'){ rec.groups=[]; rec.doc=false; rec.exempt=false; rec.child=''; }
+  if(!rec.groups.includes(OTHER_G)) rec.otherG='';
   if(rec.pay==='self'){ rec.exempt=false; rec.child=''; }
   if(rec.pay!=='c') rec.ltc={};
   if(rec.pay!=='self') rec.selfItems={};
@@ -729,7 +735,7 @@ function maskName(n){n=String(n||'').trim();const a=[...n];if(a.length<=1)return
 function sanitize(r){const x=JSON.parse(JSON.stringify(r));x.caseCode=maskName(x.caseCode);delete x.note;
   if(x.calc){delete x.calc.nurse;delete x.calc.agency;delete x.calc.pct;delete x.calc.nurseTotal;delete x.calc.agencyTotal}return x}
 function recTags(r){const c=r.calc||{},b=c.b||{};
-  return [...(r.groups||[]),...SUPPLIES.filter(s=>(r.supplies||{})[s.id]).map(s=>s.name.replace('耗材組','')+'×'+r.supplies[s.id]),
+  return [...(r.groups||[]).map(g=>g===OTHER_G&&r.otherG?'其他：'+r.otherG:g),...SUPPLIES.filter(s=>(r.supplies||{})[s.id]).map(s=>s.name.replace('耗材組','')+'×'+r.supplies[s.id]),
     ...Object.entries(r.ltc||{}).filter(([,v])=>v).map(([k,v])=>k+(v==='self'?'(自費)':'')),...(r.custom||[]).map(x=>x.name).filter(Boolean),
     ...OTHER.filter(o=>(r.other||{})[o.id]).map(o=>o.name),
     ...SELFPAY.filter(s=>(r.selfItems||{})[s.id]).map(s=>s.name+'×'+r.selfItems[s.id]),
