@@ -259,10 +259,9 @@ textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
     </div>
     <div id="dBody"></div>
     <div class="card">
-      <h2>匯出本月 CSV</h2>
-      <button class="btn sec sm" id="xBtn">產生 CSV</button>
-      <textarea class="out hide" id="xOut" readonly style="margin-top:8px"></textarea>
-      <button class="btn sec sm hide" id="xCopy" style="margin-top:6px">複製（可貼到 Excel）</button>
+      <h2>匯出本月報表</h2>
+      <div class="hint" style="margin:0 0 8px">Excel 檔含三個工作表：護理師彙總、類別分帳、明細（依上方選擇的月份）。</div>
+      <button class="btn pri" id="xBtn">下載 Excel</button>
     </div>
   </section>
 </main>
@@ -933,15 +932,53 @@ async function renderDash(){
 }
 $('dMonth').onchange=renderDash;
 
+// 匯出 Excel（SheetJS，按下時才載入）
+function loadXLSX(){return window.XLSX?Promise.resolve():new Promise((ok,ng)=>{const t=document.createElement('script');
+  t.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';t.onload=ok;t.onerror=()=>ng(new Error('Excel 元件載入失敗，請檢查網路'));document.head.appendChild(t)})}
+function sheetOf(aoa,widths,moneyCols,pctCols){
+  const ws=XLSX.utils.aoa_to_sheet(aoa); ws['!cols']=widths.map(w=>({wch:w}));
+  const R=XLSX.utils.decode_range(ws['!ref']);
+  for(let r=1;r<=R.e.r;r++){(moneyCols||[]).forEach(c=>{const a=XLSX.utils.encode_cell({r,c});if(ws[a]&&ws[a].t==='n')ws[a].z='#,##0'});
+    (pctCols||[]).forEach(c=>{const a=XLSX.utils.encode_cell({r,c});if(ws[a]&&ws[a].t==='n')ws[a].z='0.0%'});}
+  ws['!autofilter']={ref:XLSX.utils.encode_range({s:{r:0,c:0},e:{r:0,c:R.e.c}})};
+  ws['!freeze']={xSplit:0,ySplit:1};
+  return ws;
+}
 $('xBtn').onclick=async()=>{
-  try{const rows=await Store.list($('dMonth').value);
-    const head=['日期','到達','離開','護理師','個案姓名','給付','地點','時段別','緊急訪視','類別','健保點數','健保金額','掛號費','醫師訪視','自費服務','耗材','C碼','C碼部分負擔','車資','總額','護理師分得','居護所分得','現場應收','特殊照護','備註'];
-    const lines=[head,...rows.map(r=>{const c=r.calc;return [r.date,r.time||'',r.leave||'',r.nurse,r.caseCode,payName(r.pay),c.place==='inst'?'機構':'在宅',TIERS[c.tier]||slotName(r.slot),r.emerg?'是':'',catOf(r)+(c.acute?` ${c.acute.dz} 第${c.acute.day}天`:''),c.nhiPts,c.b.nhi,c.b.reg||0,c.b.doc||0,c.b.self,c.b.supply,c.b.ltc,c.ltcCopay||0,c.b.fare,c.total,c.nurseTotal,c.agencyTotal,c.onsite,r.groups.join('、'),r.note]})]
-      .map(a=>a.map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(','));
-    $('xOut').value=lines.join('\n'); $('xOut').classList.remove('hide'); $('xCopy').classList.remove('hide');
-  }catch(err){toast(err.message)}
+  const btn=$('xBtn'); btn.disabled=true; btn.textContent='產生中…';
+  try{
+    const m=$('dMonth').value;
+    const [rows]=await Promise.all([Store.list(m),loadXLSX()]);
+    if(!rows.length){toast('這個月份沒有紀錄');return}
+    rows.sort((a,b)=>(a.date+(a.time||'')).localeCompare(b.date+(b.time||'')));
+    const items=r=>recTags(r).filter(t=>!/^(掛號|車資) /.test(t)).join('、');
+    // 1. 明細
+    const head=['日期','到達','離開','護理師','個案姓名','給付方式','地點','時段別','緊急訪視','類別','服務項目','健保點數','健保金額','掛號費','醫師訪視','自費服務','耗材','專業C碼','C碼部分負擔','車資','總額','護理師分得','居護所分得','現場應收','備註'];
+    const det=[head,...rows.map(r=>{const c=r.calc;return [r.date,r.time||'',r.leave||'',r.nurse,r.caseCode,payName(r.pay),c.place==='inst'?'機構':'在宅',TIERS[c.tier]||slotName(r.slot),r.emerg?'是':'',
+      catOf(r)+(c.acute?` ${c.acute.dz} 第${c.acute.day}天`:''),items(r),c.nhiPts,c.b.nhi,c.b.reg||0,c.b.doc||0,c.b.self,c.b.supply,c.b.ltc,c.ltcCopay||0,c.b.fare,c.total,c.nurseTotal,c.agencyTotal,c.onsite,r.note||'']})];
+    const T=k=>rows.reduce((s,r)=>s+((r.calc.b||{})[k]||0),0), TT=k=>rows.reduce((s,r)=>s+(r.calc[k]||0),0);
+    det.push(['合計','','','','','','','','','','',TT('nhiPts'),T('nhi'),T('reg'),T('doc'),T('self'),T('supply'),T('ltc'),TT('ltcCopay'),T('fare'),TT('total'),TT('nurseTotal'),TT('agencyTotal'),TT('onsite'),'']);
+    const wsD=sheetOf(det,[11,6,6,8,10,9,5,10,6,16,36,8,9,7,8,9,7,8,9,7,9,10,10,9,20],[11,12,13,14,15,16,17,18,19,20,21,22,23]);
+    // 2. 護理師彙總
+    const A=agg(rows), allTot=sum(A.b)||1, allV=A.visits||1, names=Object.keys(A.byNurse).sort();
+    const nhiN=n=>rows.filter(r=>r.nurse===n&&r.pay==='nhi').length;
+    const hN=n=>rows.filter(r=>r.nurse===n&&['nhi','home','acute'].includes(r.pay)).length;
+    const sh=[['護理師','訪視次數(全部給付)','健保人次(一般健保+居家醫療+在宅急症)','一般健保人次','一般健保剩餘(上限'+CONFIG.NHI_LIMIT+')','服務量占比','總收入(未扣抽成)','收入占比',...BUCKETS.map(k=>k.name),'護理師應領','居護所分得']];
+    names.forEach(n=>{const N=A.byNurse[n],g=sum(N.b);sh.push([n,N.visits,hN(n),nhiN(n),CONFIG.NHI_LIMIT-nhiN(n),N.visits/allV,g,g/allTot,...BUCKETS.map(k=>N.b[k.id]),sum(N.nurse),sum(N.agency)])});
+    sh.push(['合計',A.visits,rows.filter(r=>['nhi','home','acute'].includes(r.pay)).length,rows.filter(r=>r.pay==='nhi').length,'',1,sum(A.b),1,...BUCKETS.map(k=>A.b[k.id]),sum(A.nurse),sum(A.agency)]);
+    const wsN=sheetOf(sh,[10,10,14,10,14,9,14,8,...BUCKETS.map(()=>9),10,10],[6,...BUCKETS.map((_,i)=>8+i),8+BUCKETS.length,9+BUCKETS.length],[5,7]);
+    // 3. 類別分帳
+    const bk=[['類別','總額','護理師','居護所'],...BUCKETS.map(k=>[k.name,A.b[k.id],A.nurse[k.id],A.agency[k.id]]),['合計',sum(A.b),sum(A.nurse),sum(A.agency)]];
+    const wsB=sheetOf(bk,[12,12,12,12],[1,2,3]);
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,wsN,'護理師彙總');
+    XLSX.utils.book_append_sheet(wb,wsB,'類別分帳');
+    XLSX.utils.book_append_sheet(wb,wsD,'明細');
+    XLSX.writeFile(wb,`愛馨訪視報表_${m}.xlsx`);
+    toast('已下載 Excel');
+  }catch(err){ if(!adminFail(err,'dash')) toast('匯出失敗：'+err.message) }
+  finally{ btn.disabled=false; btn.textContent='下載 Excel'; }
 };
-$('xCopy').onclick=async()=>{try{await navigator.clipboard.writeText($('xOut').value);toast('已複製，可貼到 Excel')}catch(e){$('xOut').select();toast('請長按全選後複製')}};
 
 /* ================= 初始化 ================= */
 let pendingTab=null;
