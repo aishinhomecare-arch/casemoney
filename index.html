@@ -386,6 +386,7 @@ const SELFPAY=[
   {id:'sWD',name:'壓瘡換藥',price:1528},
   {id:'sIV',name:'點滴注射',price:1528},
   {id:'sST',name:'造口護理',price:1528},
+  {id:'sDR',name:'醫師自費訪視',price:2200,bucket:'doc'},   // 歸「醫師訪視」，全額歸居護所
   {id:'sOT',name:'其他（自填內容與金額）',price:null}];
 const selfRowAmt=x=>{const it=SELFPAY.find(s=>s.id===x.id); return it?(it.price==null?(Number(x.amt)||0):it.price):0};
 const selfRowName=x=>{const it=SELFPAY.find(s=>s.id===x.id); return it?(it.price==null?'其他：'+(x.desc||''):it.name):''};
@@ -529,7 +530,8 @@ function calc(f){
     b.nhi=Math.round(nursePts*rate)+emerPts;            // 緊急訪視費不收部分負擔
     acute={dz:dz.name,day,nursePts,emerPts,emOk,over:day>dz.limit,beyond:day>dz.target};
   } else if(isSelf){
-    b.self=(f.selfRows||[]).reduce((t,x)=>t+selfRowAmt(x),0);   // 全自費：各項目金額加總
+    (f.selfRows||[]).forEach(x=>{const it=SELFPAY.find(s=>s.id===x.id);   // 全自費：各項目金額加總
+      if(it&&it.bucket==='doc') b.doc+=selfRowAmt(x); else b.self+=selfRowAmt(x)});
     if(!(f.selfRows||[]).length && f.selfAmt) b.self=Number(f.selfAmt)||0;   // 舊版紀錄相容
   } else if(!isC){
     const tbl=f.pay==='nhi'&&place==='inst'?CONFIG.PTS.nhi_inst:CONFIG.PTS[f.pay];
