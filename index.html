@@ -180,8 +180,9 @@ textarea.out{height:120px;font-family:ui-monospace,monospace;font-size:12px}
           <label class="chk" id="docWrap"><input type="checkbox" id="fDoc"> 醫師同行訪視（另計醫師訪視費）</label>
         </div>
         <div id="selfWrap" class="hide">
-          <label class="f">全自費服務項目</label>
-          <div id="fSelfItems"></div>
+          <label class="f">本次自費訪視收費金額（元）</label>
+          <input type="number" inputmode="numeric" min="0" id="fSelfAmt" placeholder="請輸入實際向個案收取的金額">
+          <div class="hint" id="selfRef"></div>
         </div>
         <div id="ltcWrap" class="hide">
           <label class="f">長照身分（決定 C 碼部分負擔）</label>
@@ -518,8 +519,7 @@ function calc(f){
     b.nhi=Math.round(nursePts*rate)+emerPts;            // 緊急訪視費不收部分負擔
     acute={dz:dz.name,day,nursePts,emerPts,emOk,over:day>dz.limit,beyond:day>dz.target};
   } else if(isSelf){
-    b.self=CONFIG.SELF_PRICE[tier][cat-1];          // 依類別與時段（不論是否緊急）
-    if(f.doc) b.doc=CONFIG.SELF_DOC;
+    b.self=Number(f.selfAmt)||0;                   // 全自費：由護理師填實際收費金額，不自動帶價
   } else if(!isC){
     const tbl=f.pay==='nhi'&&place==='inst'?CONFIG.PTS.nhi_inst:CONFIG.PTS[f.pay];
     addPct=(f.emerg?CONFIG.EMERG[tier]:0)+(CONFIG.CHILD[f.child||'']||0);
@@ -559,7 +559,8 @@ function resetForm(keep){
   F={date:d,time:t0,leave:plusHour(t0),leaveTouched:false,holiday:isWeekend(d),emerg:false,nurse:keep?.nurse||lsGet('ax_nurse',activeNurses()[0]),
      caseCode:'',pay:keep?.pay||'nhi',place:keep?.place||'home',exempt:false,doc:false,child:'',house:'gen',
      dz:keep?.dz||'pn',day:'1',sameDay:false,disaster:false,
-     groups:[],otherG:'',supplies:{},other:{},custom:[],ltc:{},selfItems:{},fare:'',note:''};
+     groups:[],otherG:'',supplies:{},other:{},custom:[],ltc:{},selfItems:{},selfAmt:'',fare:'',note:''};
+  if($('fSelfAmt')) $('fSelfAmt').value='';
   if($('fOtherG')) $('fOtherG').value='';
   $('fDate').value=F.date; $('fTime').value=F.time; $('fLeave').value=F.leave; $('fHoliday').checked=F.holiday;
   $('fEmerg').checked=false; $('fExempt').checked=false; $('fDoc').checked=false; $('fChild').value='';
@@ -590,8 +591,8 @@ function renderForm(){
   $('exemptWrap').classList.toggle('hide',F.pay==='self');
   $('acuteWrap').classList.toggle('hide',F.pay!=='acute');
   seg($('fDz'),Object.entries(CONFIG.ACUTE.dz).map(([id,d])=>({id,name:d.name})),F.dz,v=>{F.dz=v;renderForm()});
-  $('docWrap').classList.toggle('hide',!(F.pay==='nhi'||F.pay==='self'));
-  if(!(F.pay==='nhi'||F.pay==='self')){ F.doc=false; $('fDoc').checked=false; }
+  $('docWrap').classList.toggle('hide',F.pay!=='nhi');
+  if(F.pay!=='nhi'){ F.doc=false; $('fDoc').checked=false; }
   seg($('fGroups'),GROUPS.map(g=>({id:g,name:g})),F.groups,v=>{
     F.groups=F.groups.includes(v)?F.groups.filter(x=>x!==v):[...F.groups,v];renderForm()},true);
   stepper(SUPPLIES,F.supplies,$('fSupplies'));
@@ -605,8 +606,9 @@ function renderForm(){
   const isC=F.pay==='c', isSelf=F.pay==='self';
   $('groupsWrap').classList.toggle('hide',isC);
   $('ltcWrap').classList.toggle('hide',!isC);
-  $('selfWrap').classList.add('hide');
+  $('selfWrap').classList.toggle('hide',!isSelf);
   const r=calc(F);
+  if(isSelf) $('selfRef').textContent=`價目表參考：${catName(r.cat)}・${TIERS[r.tier]} ${fmt(CONFIG.SELF_PRICE[r.tier][r.cat-1])}（僅供參考，不會自動計入）`;
   const emTxt=F.pay==='acute'
     ? (F.emerg?(r.acute.emOk?'護理人員緊急訪視費 2,632 點':'緊急訪視限 18:00–08:00 抵達，本次不計'):'非緊急訪視')
     : (F.emerg?`緊急訪視加成 +${Math.round(CONFIG.EMERG[r.tier]*100)}%`:'非緊急訪視：不加成');
@@ -614,7 +616,7 @@ function renderForm(){
   $('supplyWarn').classList.toggle('hide',isC||isSelf||!SUPPLIES.some(s=>F.supplies[s.id]));
   const a=r.acute;
   $('fCat').innerHTML=isSelf
-    ? `全自費・${catName(r.cat)}・${TIERS[r.tier]} ${fmt(r.b.self)}${F.doc?`<br>醫師訪視（自費）${fmt(r.b.doc)}`:''}`
+    ? (r.b.self?`全自費・自填金額 ${fmt(r.b.self)}`:'<span class="err">全自費：請在上方輸入收費金額</span>')
     : F.pay==='acute'
     ? `在宅急症・${a.dz} 第 ${a.day} 天${a.over?'<br><span class="err">已超過上限天數，健保不予支付</span>':''}
        ${a.nursePts?`<br>每日護理費 ${a.nursePts.toLocaleString()} 點${a.beyond?'（目標天數外）':''}${r.addPct?`（含加成 ${Math.round(r.addPct*100)}%）`:''}`:''}
@@ -650,6 +652,8 @@ $('fCase').oninput=e=>{F.caseCode=e.target.value; pendingId=null};
 $('fFare').oninput=e=>{F.fare=e.target.value;liveSum()};
 $('fNote').oninput=e=>F.note=e.target.value;
 $('fOtherG').oninput=e=>F.otherG=e.target.value;
+$('fSelfAmt').oninput=e=>{F.selfAmt=e.target.value;const r=calc(F);
+  $('fCat').innerHTML=r.b.self?`全自費・自填金額 ${fmt(r.b.self)}`:'<span class="err">全自費：請在上方輸入收費金額</span>';liveSum()};
 
 // 防重複：①送出中鎖住按鈕 ②同一筆重送沿用同一個 id（伺服器只存一次）
 //         ③同一天同一位個案已有紀錄時先確認 ④顯示今天已送出清單
@@ -662,7 +666,7 @@ function buildRec(){
   delete rec.leaveTouched;
   if(rec.pay==='c'){ rec.groups=[]; rec.doc=false; rec.exempt=false; rec.child=''; }
   if(!rec.groups.includes(OTHER_G)) rec.otherG='';
-  if(rec.pay==='self'){ rec.exempt=false; rec.child=''; }
+  if(rec.pay==='self'){ rec.exempt=false; rec.child=''; rec.doc=false; } else delete rec.selfAmt;
   if(rec.pay!=='c') rec.ltc={};
   if(rec.pay!=='self') rec.selfItems={};
   if(rec.pay!=='nhi'&&rec.pay!=='acute') rec.place='home';
@@ -677,6 +681,7 @@ async function submitRecord(force){
   if(!F.caseCode.trim()) return toast('請填個案姓名');
   if(!F.time) return toast('請填到達時間');
   if(F.pay==='c' && !Object.values(F.ltc).some(Boolean)) return toast('請選擇 C 碼項目');
+  if(F.pay==='self' && !(Number(F.selfAmt)>0)) return toast('請輸入全自費收費金額');
 
   const btn=$('submitBtn'); if(btn.disabled) return;
   btn.disabled=true; btn.textContent='儲存中…';
