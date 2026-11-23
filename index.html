@@ -371,17 +371,21 @@ const SUPPLIES=[
   {id:'fx',name:'尿管固定帶',price:200}];
 const OTHER=[{id:'miss',name:'服務未遇處理費',price:240}];
 // 全自費服務（價格取自愛馨 S2 價目表「自費費用」欄）
-// 全自費項目（價格取自愛馨 S2 價目表「自費費用」欄；price:null＝其他，自填內容與金額）
+// 全自費項目（愛馨 115.11.23 定價；price:null＝其他，自填內容與金額）
 const SELFPAY=[
-  {id:'sBL',name:'抽血／代採檢體',price:1500},
-  {id:'sGN',name:'護理評估／衛教',price:1200},
-  {id:'sTR',name:'氣切護理（換管）',price:2000},
-  {id:'sFL',name:'留置導尿管（換管）',price:1500},
-  {id:'sNG',name:'留置鼻胃管（換管）',price:1500},
-  {id:'sBI',name:'膀胱灌洗',price:1500},
-  {id:'sWD',name:'3、4期壓瘡傷口（換藥）',price:2000},
-  {id:'sIV',name:'大量點滴注射',price:1500},
-  {id:'sST',name:'造口護理',price:1500},
+  {id:'sBL',name:'抽血',price:1103},
+  {id:'sGN',name:'護理評估／衛教（CD02）',price:2000},
+  {id:'sCA07',name:'復能衛教（CA07）',price:2000},
+  {id:'sCB01',name:'營養照護（CB01）',price:2000},
+  {id:'sCB02',name:'進食與吞嚥照護（CB02）',price:2000},
+  {id:'sCB04',name:'活動受限照護（CB04）',price:2000},
+  {id:'sTR',name:'氣切換管',price:1528},
+  {id:'sFL',name:'留置尿管',price:1528},
+  {id:'sNG',name:'鼻胃管',price:1528},
+  {id:'sBI',name:'膀胱灌洗',price:1528},
+  {id:'sWD',name:'壓瘡換藥',price:1528},
+  {id:'sIV',name:'點滴注射',price:1528},
+  {id:'sST',name:'造口護理',price:1528},
   {id:'sOT',name:'其他（自填內容與金額）',price:null}];
 const selfRowAmt=x=>{const it=SELFPAY.find(s=>s.id===x.id); return it?(it.price==null?(Number(x.amt)||0):it.price):0};
 const selfRowName=x=>{const it=SELFPAY.find(s=>s.id===x.id); return it?(it.price==null?'其他：'+(x.desc||''):it.name):''};
